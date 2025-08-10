@@ -33,7 +33,34 @@ cargo build --release
 ### 2. Install via Nix (for Nix or NixOS users)
 
 ```bash
-nix profile install github:lonerOrz/nsticky#nsticky
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    nsticky.url = "github:lonerOrz/nsticky";
+  };
+
+  outputs =
+    inputs@{
+      self,
+      flake-utils,
+      nixpkgs,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+        };
+      in
+      {
+        devShells.default = pkgs.mkShell {
+          packages = [ inputs.nsticky.packages.${system}.nsticky ];
+        };
+      }
+    );
+}
 ```
 
 ### 3. Use precompiled binaries directly
