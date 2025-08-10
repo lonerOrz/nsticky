@@ -13,14 +13,14 @@ pub async fn start(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> {
     let sticky_clone = sticky_windows.clone();
     tokio::spawn(async move {
         if let Err(e) = run_cli_server(sticky_clone).await {
-            eprintln!("CLI server error: {:?}", e);
+            eprintln!("CLI server error: {e:?}");
         }
     });
 
     let sticky_clone = sticky_windows.clone();
     tokio::spawn(async move {
         if let Err(e) = run_watcher(sticky_clone).await {
-            eprintln!("Watcher error: {:?}", e);
+            eprintln!("Watcher error: {e:?}");
         }
     });
 
@@ -40,7 +40,7 @@ async fn run_cli_server(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> 
         let sticky_clone = sticky_windows.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_cli_connection(stream, sticky_clone).await {
-                eprintln!("CLI connection error: {:?}", e);
+                eprintln!("CLI connection error: {e:?}");
             }
         });
     }
@@ -126,7 +126,7 @@ pub async fn handle_cli_connection(
                 .filter(|id| full_window_list.contains(id))
                 .collect();
 
-            let list_str = format!("{:?}\n", valid);
+            let list_str = format!("{valid:?}\n");
             writer.write_all(list_str.as_bytes()).await?;
         }
 
@@ -173,7 +173,7 @@ pub async fn handle_cli_connection(
 // 获取active窗口的ID
 async fn get_active_window_id() -> Result<u64> {
     let output = tokio::process::Command::new("niri")
-        .args(&["msg", "--json", "focused-window"])
+        .args(["msg", "--json", "focused-window"])
         .output()
         .await?;
 
@@ -203,10 +203,10 @@ async fn run_watcher(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> {
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
-        if let Ok(v) = serde_json::from_str::<Value>(&line) {
-            if let Some(ws) = v.get("WorkspaceActivated") {
-                if let Some(ws_id) = ws.get("id").and_then(|id| id.as_u64()) {
-                    println!("Workspace switched to: {}", ws_id);
+        if let Ok(v) = serde_json::from_str::<Value>(&line)
+            && let Some(ws) = v.get("WorkspaceActivated")
+                && let Some(ws_id) = ws.get("id").and_then(|id| id.as_u64()) {
+                    println!("Workspace switched to: {ws_id}");
 
                     let sticky_snapshot = {
                         let mut sticky = sticky_windows.lock().await;
@@ -218,12 +218,10 @@ async fn run_watcher(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> {
 
                     for win_id in sticky_snapshot.iter() {
                         if let Err(e) = move_to_workspace(*win_id, ws_id).await {
-                            eprintln!("Failed to move window {}: {:?}", win_id, e);
+                            eprintln!("Failed to move window {win_id}: {e:?}");
                         }
                     }
                 }
-            }
-        }
         line.clear();
     }
 
@@ -232,7 +230,7 @@ async fn run_watcher(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> {
 
 async fn get_full_window_list() -> Result<HashSet<u64>> {
     let output = Command::new("niri")
-        .args(&["msg", "--json", "windows"])
+        .args(["msg", "--json", "windows"])
         .output()
         .await?;
 

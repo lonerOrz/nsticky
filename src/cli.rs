@@ -38,8 +38,8 @@ pub async fn run_cli() -> Result<()> {
 
     // 根据子命令构造命令字符串
     let cmd_str = match cli.command {
-        Commands::Add { window_id } => format!("add {}\n", window_id),
-        Commands::Remove { window_id } => format!("remove {}\n", window_id),
+        Commands::Add { window_id } => format!("add {window_id}\n"),
+        Commands::Remove { window_id } => format!("remove {window_id}\n"),
         Commands::List => "list\n".to_string(),
         Commands::ToggleActive => "toggle_active\n".to_string(),
     };
@@ -49,7 +49,7 @@ pub async fn run_cli() -> Result<()> {
 
     let mut response = String::new();
     reader.read_line(&mut response).await?;
-    print!("{}", response);
+    print!("{response}");
 
     Ok(())
 }

@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if env::args().skip(1).next().is_some() {
+    if env::args().nth(1).is_some() {
         // 有参数，运行cli
         return cli::run_cli().await;
     }
