@@ -101,7 +101,7 @@ Please format code with `cargo fmt` and check with `cargo clippy`.
 
 ## License
 
-MIT License
+This project is licensed under the BSD 3-Clause License.
 
 ---
 
