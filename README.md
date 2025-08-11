@@ -2,6 +2,11 @@
 
 `nsticky` is a window management helper tool built on top of [niri](https://github.com/YaLTeR/niri). It focuses on managing **sticky windows** — windows fixed across all workspaces — to enhance your workflow efficiency.
 
+## Why?
+
+Niri doesn’t natively support global floating windows.
+This tool forces float windows to persist on every workspace, mimicking the sticky behavior from X11/Wayland compositors like Sway or KWin.
+
 ## Features
 
 ✨ **Powerful Sticky Window Management:**
