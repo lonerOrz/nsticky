@@ -93,6 +93,7 @@ spawn-at-startup "nsticky"
 Control `nsticky` from the terminal using grouped CLI commands:
 
 #### Sticky Window Management:
+
 ```bash
 nsticky sticky add <window_id>          # Add a window to the sticky list
 nsticky sticky remove <window_id>       # Remove a window from the sticky list
@@ -102,7 +103,16 @@ nsticky sticky toggle-appid <appid>     # Toggle sticky state of window by appli
 nsticky sticky toggle-title <title>     # Toggle sticky state of window by title
 ```
 
+> **Note:** The stage commands require a "stage" workspace to be defined in your Niri config:
+>
+> ```nix
+> workspace "stage" {
+>     open-on-output = "eDP-1"  # optional: specify which output
+> }
+> ```
+
 #### Stage Window Management:
+
 ```bash
 nsticky stage list                      # List all currently staged windows
 nsticky stage add <window_id>           # Move a sticky window to the "stage" workspace
@@ -128,6 +138,7 @@ Mod+Shift+Space { spawn "nsticky" "stage" "toggle-active"; }
 `nsticky` follows a modular architecture with clear separation of concerns:
 
 ### Core Modules:
+
 - **main.rs**: Entry point, starts either CLI or daemon mode
 - **cli.rs**: Parses and sends commands to the daemon
 - **daemon.rs**: Handles incoming CLI commands and Niri events
@@ -136,6 +147,7 @@ Mod+Shift+Space { spawn "nsticky" "stage" "toggle-active"; }
 - **system_integration.rs**: Handles communication with the Niri window manager
 
 ### State Management:
+
 - **Sticky Windows**: Windows that appear on every workspace
 - **Staged Windows**: Windows temporarily moved to a dedicated "stage" workspace
 - Atomic operations ensure state consistency during window management operations
@@ -164,7 +176,7 @@ The daemon also listens to `niri`'s event stream to automatically handle window 
 
 - `nsticky` relies on the `niri` window manager.
 - The daemon requires the `NIRI_SOCKET` environment variable to connect to Niri.
-- The staging feature moves windows to a workspace named "stage". Ensure this workspace exists in your Niri configuration, or it will be created automatically when needed.
+- The staging feature moves windows to a workspace named "stage". Ensure this workspace exists in your Niri configuration.
 - Window IDs can be obtained using `niri msg --json windows`
 
 ---
