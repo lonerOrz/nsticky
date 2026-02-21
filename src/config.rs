@@ -33,47 +33,46 @@ impl Config {
         let mut sticky_rules = Vec::new();
 
         if let Some(sticky) = table.get("sticky")
-            && let Some(sticky_table) = sticky.as_table() {
-                for (name, value) in sticky_table {
-                    if let Some(rule_table) = value.as_table() {
-                        let app_id = rule_table
-                            .get("app_id")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        let title = rule_table
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
+            && let Some(sticky_table) = sticky.as_table()
+        {
+            for (name, value) in sticky_table {
+                if let Some(rule_table) = value.as_table() {
+                    let app_id = rule_table
+                        .get("app_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let title = rule_table
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
 
-                        if app_id.is_none() && title.is_none() {
-                            continue;
-                        }
-
-                        let compiled_app_id = app_id
-                            .as_ref()
-                            .map(|p| {
-                                Regex::new(p).with_context(|| {
-                                    format!("Invalid app_id regex in sticky.{}", name)
-                                })
-                            })
-                            .transpose()?;
-
-                        let compiled_title = title
-                            .as_ref()
-                            .map(|p| {
-                                Regex::new(p).with_context(|| {
-                                    format!("Invalid title regex in sticky.{}", name)
-                                })
-                            })
-                            .transpose()?;
-
-                        sticky_rules.push(CompiledRule {
-                            app_id: compiled_app_id,
-                            title: compiled_title,
-                        });
+                    if app_id.is_none() && title.is_none() {
+                        continue;
                     }
+
+                    let compiled_app_id = app_id
+                        .as_ref()
+                        .map(|p| {
+                            Regex::new(p)
+                                .with_context(|| format!("Invalid app_id regex in sticky.{}", name))
+                        })
+                        .transpose()?;
+
+                    let compiled_title = title
+                        .as_ref()
+                        .map(|p| {
+                            Regex::new(p)
+                                .with_context(|| format!("Invalid title regex in sticky.{}", name))
+                        })
+                        .transpose()?;
+
+                    sticky_rules.push(CompiledRule {
+                        app_id: compiled_app_id,
+                        title: compiled_title,
+                    });
                 }
             }
+        }
 
         Ok(Config { sticky_rules })
     }
