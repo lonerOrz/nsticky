@@ -114,24 +114,16 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
         },
         protocol::Request::ToggleAppid { appid } => {
             match business_logic.toggle_by_appid(&appid).await {
-                Ok(was_added) => {
-                    if was_added {
-                        protocol::Response::Success("Added window to sticky\n".to_string())
-                    } else {
-                        protocol::Response::Success("Removed window from sticky\n".to_string())
-                    }
+                Ok(count) => {
+                    protocol::Response::Success(format!("Toggled {} window(s)\n", count))
                 }
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
         }
         protocol::Request::ToggleTitle { title } => {
             match business_logic.toggle_by_title(&title).await {
-                Ok(was_added) => {
-                    if was_added {
-                        protocol::Response::Success("Added window to sticky\n".to_string())
-                    } else {
-                        protocol::Response::Success("Removed window from sticky\n".to_string())
-                    }
+                Ok(count) => {
+                    protocol::Response::Success(format!("Toggled {} window(s)\n", count))
                 }
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
@@ -183,8 +175,8 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                     .toggle_stage_by_appid(&appid, current_ws_id)
                     .await
                 {
-                    Ok(()) => {
-                        protocol::Response::Success("Toggled stage status by app ID\n".to_string())
+                    Ok(count) => {
+                        protocol::Response::Success(format!("Toggled {} window(s)\n", count))
                     }
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
@@ -202,8 +194,8 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                     .toggle_stage_by_title(&title, current_ws_id)
                     .await
                 {
-                    Ok(()) => {
-                        protocol::Response::Success("Toggled stage status by title\n".to_string())
+                    Ok(count) => {
+                        protocol::Response::Success(format!("Toggled {} window(s)\n", count))
                     }
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
@@ -308,12 +300,14 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
                 let window_id = window.get("id").and_then(|v| v.as_u64());
 
                 if let Some(id) = window_id {
-                    // Skip if already auto-sticky'd AND currently in staged
-                    // (but allow if it's back in sticky - user may have unstaged it)
+                    // Skip if:
+                    // 1. Already auto-sticky'd AND currently in staged, OR
+                    // 2. Was auto-sticky'd but user manually removed from sticky
                     let is_in_staged = business_logic.is_window_staged(id).await;
+                    let is_in_sticky = business_logic.is_window_sticky(id).await;
                     let was_auto_sticky = auto_staged_windows.contains(&id);
 
-                    if is_in_staged && was_auto_sticky {
+                    if (is_in_staged && was_auto_sticky) || (was_auto_sticky && !is_in_sticky) {
                         continue;
                     }
 

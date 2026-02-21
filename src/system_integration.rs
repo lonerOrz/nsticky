@@ -96,7 +96,7 @@ pub async fn get_full_window_list() -> Result<HashSet<u64>> {
     Ok(windows.into_iter().map(|w| w.id).collect())
 }
 
-/// Find window by application ID
+/// Find window by application ID (returns first match)
 pub async fn find_window_by_appid(appid: &str) -> Result<Option<u64>> {
     let windows = get_full_window_info().await?;
     for window in windows {
@@ -109,7 +109,21 @@ pub async fn find_window_by_appid(appid: &str) -> Result<Option<u64>> {
     Ok(None)
 }
 
-/// Find window by title
+/// Find all windows by application ID (returns all matches)
+pub async fn find_windows_by_appid(appid: &str) -> Result<Vec<u64>> {
+    let windows = get_full_window_info().await?;
+    let mut ids = Vec::new();
+    for window in windows {
+        if let Some(window_appid) = window.app_id
+            && window_appid == appid
+        {
+            ids.push(window.id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Find window by title (returns first match)
 pub async fn find_window_by_title(title: &str) -> Result<Option<u64>> {
     let windows = get_full_window_info().await?;
     for window in windows {
@@ -120,6 +134,20 @@ pub async fn find_window_by_title(title: &str) -> Result<Option<u64>> {
         }
     }
     Ok(None)
+}
+
+/// Find all windows by title (returns all matches)
+pub async fn find_windows_by_title(title: &str) -> Result<Vec<u64>> {
+    let windows = get_full_window_info().await?;
+    let mut ids = Vec::new();
+    for window in windows {
+        if let Some(window_title) = window.title
+            && window_title.contains(title)
+        {
+            ids.push(window.id);
+        }
+    }
+    Ok(ids)
 }
 
 /// Move window to workspace
