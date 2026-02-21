@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future;
 use std::sync::Arc;
 use tokio::{
@@ -9,10 +9,10 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::{business::BusinessLogic, protocol};
+use crate::{business::BusinessLogic, config, protocol};
 
 pub async fn start(sticky_windows: Arc<Mutex<HashSet<u64>>>) -> Result<()> {
-    let staged_set = Arc::new(Mutex::new(HashSet::new()));
+    let staged_set = Arc::new(Mutex::new(HashMap::new()));
     let business_logic = BusinessLogic::new(sticky_windows, staged_set);
 
     let cli_business_logic = business_logic.clone();
@@ -280,15 +280,50 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
 
     let mut line = String::new();
 
+    let config = config::get_config();
+    let mut auto_staged_windows: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
     while reader.read_line(&mut line).await? > 0 {
-        if let Ok(v) = serde_json::from_str::<Value>(&line)
-            && let Some(ws) = v.get("WorkspaceActivated")
-            && let Some(ws_id) = ws.get("id").and_then(|id| id.as_u64())
-        {
-            println!("Workspace switched to: {ws_id}");
-            if let Err(_e) = business_logic.handle_workspace_activation(ws_id).await {
-                eprintln!("Failed to handle workspace activation: {_e:?}");
-            }
+        if let Ok(v) = serde_json::from_str::<Value>(&line) {
+            if let Some(ws) = v.get("WorkspaceActivated")
+                && let Some(ws_id) = ws.get("id").and_then(|id| id.as_u64()) {
+                    println!("Workspace switched to: {ws_id}");
+                    if let Err(_e) = business_logic.handle_workspace_activation(ws_id).await {
+                        eprintln!("Failed to handle workspace activation: {_e:?}");
+                    }
+                }
+
+            if let Some(window_event) = v.get("WindowOpenedOrChanged")
+                && let Some(window) = window_event.get("window") {
+                    let app_id = window
+                        .get("app_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let title = window
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let window_id = window.get("id").and_then(|v| v.as_u64());
+
+                    if let Some(id) = window_id {
+                        // Skip if already auto-sticky'd AND currently in staged
+                        // (but allow if it's back in sticky - user may have unstaged it)
+                        let is_in_staged = business_logic.is_window_staged(id).await;
+                        let was_auto_sticky = auto_staged_windows.contains(&id);
+                        
+                        if is_in_staged && was_auto_sticky {
+                            continue;
+                        }
+
+                        if config.match_sticky(&app_id, &title) {
+                            auto_staged_windows.insert(id);
+                            println!("Auto-sticky window {} ({:?})", id, app_id);
+                            if let Err(e) = business_logic.add_sticky_window(id).await {
+                                eprintln!("Failed to auto-sticky window {}: {:?}", id, e);
+                            }
+                        }
+                    }
+                }
         }
         line.clear();
     }

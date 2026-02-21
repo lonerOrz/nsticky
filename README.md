@@ -78,6 +78,29 @@ cargo build --release
 
 ---
 
+## Configuration
+
+Create `~/.config/nsticky/config.toml` to auto-sticky windows matching rules:
+
+```toml
+[sticky.firefox]
+app_id = "firefox"
+
+[sticky.kitty]
+app_id = "kitty"
+title = ".*server.*"
+
+[sticky.gmail]
+title = ".*Gmail.*"
+```
+
+**Matching rules:**
+- `app_id` and `title` are AND logic (both must match)
+- Use regex patterns
+- If only one field is specified, it matches any value
+
+---
+
 ## Usage
 
 ### Daemon mode

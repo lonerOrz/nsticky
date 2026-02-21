@@ -1,5 +1,6 @@
 mod business;
 mod cli;
+mod config;
 mod daemon;
 mod protocol;
 mod system_integration;
