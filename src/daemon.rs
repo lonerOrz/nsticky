@@ -114,17 +114,13 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
         },
         protocol::Request::ToggleAppid { appid } => {
             match business_logic.toggle_by_appid(&appid).await {
-                Ok(count) => {
-                    protocol::Response::Success(format!("Toggled {} window(s)\n", count))
-                }
+                Ok(count) => protocol::Response::Success(format!("Toggled {} window(s)\n", count)),
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
         }
         protocol::Request::ToggleTitle { title } => {
             match business_logic.toggle_by_title(&title).await {
-                Ok(count) => {
-                    protocol::Response::Success(format!("Toggled {} window(s)\n", count))
-                }
+                Ok(count) => protocol::Response::Success(format!("Toggled {} window(s)\n", count)),
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
         }

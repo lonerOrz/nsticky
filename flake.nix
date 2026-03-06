@@ -3,16 +3,19 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
-    treefmt-nix = {
-      url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    adios-flake.url = "github:Mic92/adios-flake";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
+    inputs@{
+      adios-flake,
+      self,
+      ...
+    }:
+    adios-flake.lib.mkFlake {
+      inherit inputs self;
+
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -20,30 +23,36 @@
         "aarch64-darwin"
       ];
 
-      imports = [
-        inputs.treefmt-nix.flakeModule
-      ];
+      modules = [ ];
 
       perSystem =
         {
-          config,
           self',
-          inputs',
           pkgs,
-          system,
           ...
         }:
         let
           lib = pkgs.lib;
+          treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
+            projectRootFile = "flake.nix";
+            programs = {
+              rustfmt.enable = true;
+              nixfmt.enable = true;
+            };
+          };
         in
         {
+          formatter = treefmtEval.config.build.wrapper;
+
           packages = {
             default = self'.packages.nsticky;
+
             nsticky = pkgs.rustPlatform.buildRustPackage {
               pname = "nsticky";
               version = "0.1.0";
               src = ./.;
               cargoLock.lockFile = ./Cargo.lock;
+
               meta = {
                 description = "A sticky windows manager CLI tool for Niri";
                 homepage = "https://github.com/lonerOrz/nsticky";
@@ -71,14 +80,6 @@
               cargo-watch
               cargo-criterion
             ];
-          };
-
-          treefmt = {
-            projectRootFile = "flake.nix";
-            programs = {
-              rustfmt.enable = true;
-              alejandra.enable = true;
-            };
           };
         };
     };
