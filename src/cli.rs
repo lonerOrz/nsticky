@@ -132,8 +132,6 @@ pub async fn run_cli() -> Result<()> {
                     window_id: Some(window_id),
                     all: false,
                     active: false,
-                    appid: None,
-                    title: None,
                 })
             }
             StageAction::ToggleActive => protocol::Request::Stage(crate::protocol::StageArgs {
@@ -176,8 +174,6 @@ pub async fn run_cli() -> Result<()> {
                 window_id: None,
                 all: true,
                 active: false,
-                appid: None,
-                title: None,
             }),
         },
     };

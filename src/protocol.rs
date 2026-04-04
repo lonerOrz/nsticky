@@ -26,15 +26,12 @@ pub struct StageArgs {
     pub title: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UnstageArgs {
     pub window_id: Option<u64>,
     pub all: bool,
     pub active: bool,
-    pub appid: Option<String>,
-    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

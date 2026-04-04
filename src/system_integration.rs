@@ -111,20 +111,6 @@ pub async fn get_full_window_list() -> Result<HashSet<u64>> {
     Ok(windows.into_iter().map(|w| w.id).collect())
 }
 
-/// Find window by application ID (returns first match)
-#[allow(dead_code)]
-pub async fn find_window_by_appid(appid: &str) -> Result<Option<u64>> {
-    let windows = get_full_window_info().await?;
-    for window in windows {
-        if let Some(window_appid) = window.app_id
-            && window_appid == appid
-        {
-            return Ok(Some(window.id));
-        }
-    }
-    Ok(None)
-}
-
 /// Find all windows by application ID (returns all matches)
 pub async fn find_windows_by_appid(appid: &str) -> Result<Vec<u64>> {
     let windows = get_full_window_info().await?;
@@ -137,20 +123,6 @@ pub async fn find_windows_by_appid(appid: &str) -> Result<Vec<u64>> {
         }
     }
     Ok(ids)
-}
-
-/// Find window by title (returns first match)
-#[allow(dead_code)]
-pub async fn find_window_by_title(title: &str) -> Result<Option<u64>> {
-    let windows = get_full_window_info().await?;
-    for window in windows {
-        if let Some(window_title) = window.title
-            && window_title.contains(title)
-        {
-            return Ok(Some(window.id));
-        }
-    }
-    Ok(None)
 }
 
 /// Find all windows by title (returns all matches)

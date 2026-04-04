@@ -340,6 +340,7 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
 
     writer.write_all(b"\"EventStream\"\n").await?;
     writer.flush().await?;
+    drop(writer);
 
     let mut line = String::new();
 

@@ -96,22 +96,25 @@ impl BusinessLogic {
                 continue;
             }
 
-            let mut sticky = self.sticky_windows.lock().await;
-            let staged = self.staged_set.lock().await;
+            let (is_staged, is_sticky) = {
+                let sticky = self.sticky_windows.lock().await;
+                let staged = self.staged_set.lock().await;
+                (staged.contains_key(&id), sticky.contains(&id))
+            };
 
-            if staged.contains_key(&id) {
-                drop(sticky);
-                drop(staged);
+            if is_staged {
                 crate::system_integration::move_to_workspace(id, current_ws_id).await?;
-                let mut sticky = self.sticky_windows.lock().await;
                 let mut staged = self.staged_set.lock().await;
                 let was_sticky = staged.remove(&id).unwrap_or(false);
                 if was_sticky {
+                    let mut sticky = self.sticky_windows.lock().await;
                     sticky.insert(id);
                 }
-            } else if sticky.contains(&id) {
+            } else if is_sticky {
+                let mut sticky = self.sticky_windows.lock().await;
                 sticky.remove(&id);
             } else {
+                let mut sticky = self.sticky_windows.lock().await;
                 sticky.insert(id);
             }
             count += 1;
@@ -134,22 +137,25 @@ impl BusinessLogic {
                 continue;
             }
 
-            let mut sticky = self.sticky_windows.lock().await;
-            let staged = self.staged_set.lock().await;
+            let (is_staged, is_sticky) = {
+                let sticky = self.sticky_windows.lock().await;
+                let staged = self.staged_set.lock().await;
+                (staged.contains_key(&id), sticky.contains(&id))
+            };
 
-            if staged.contains_key(&id) {
-                drop(sticky);
-                drop(staged);
+            if is_staged {
                 crate::system_integration::move_to_workspace(id, current_ws_id).await?;
-                let mut sticky = self.sticky_windows.lock().await;
                 let mut staged = self.staged_set.lock().await;
                 let was_sticky = staged.remove(&id).unwrap_or(false);
                 if was_sticky {
+                    let mut sticky = self.sticky_windows.lock().await;
                     sticky.insert(id);
                 }
-            } else if sticky.contains(&id) {
+            } else if is_sticky {
+                let mut sticky = self.sticky_windows.lock().await;
                 sticky.remove(&id);
             } else {
+                let mut sticky = self.sticky_windows.lock().await;
                 sticky.insert(id);
             }
             count += 1;
@@ -181,7 +187,6 @@ impl BusinessLogic {
         if let Err(e) = crate::system_integration::move_to_named_workspace(window_id, "stage").await
         {
             let mut sticky = self.sticky_windows.lock().await;
-            let _staged = self.staged_set.lock().await;
             if was_sticky {
                 sticky.insert(window_id);
             }
@@ -218,7 +223,6 @@ impl BusinessLogic {
 
         if let Err(e) = crate::system_integration::move_to_named_workspace(id, "stage").await {
             let mut sticky = self.sticky_windows.lock().await;
-            let _staged = self.staged_set.lock().await;
             if was_sticky {
                 sticky.insert(id);
             }
@@ -312,7 +316,6 @@ impl BusinessLogic {
         for id in valid_sticky_ids {
             let was_sticky = {
                 let mut sticky = self.sticky_windows.lock().await;
-                let _staged = self.staged_set.lock().await;
                 sticky.remove(&id)
             };
 
@@ -324,7 +327,6 @@ impl BusinessLogic {
             } else {
                 tracing::error!("Failed to move window {id} to stage");
                 let mut sticky = self.sticky_windows.lock().await;
-                let _staged = self.staged_set.lock().await;
                 if was_sticky {
                     sticky.insert(id);
                 }
@@ -440,7 +442,6 @@ impl BusinessLogic {
                 results.push((id, was_sticky));
             } else {
                 tracing::error!("Failed to move window {id} to workspace {workspace_id}");
-                let _sticky = self.sticky_windows.lock().await;
                 let mut staged = self.staged_set.lock().await;
                 staged.insert(id, was_sticky);
             }
