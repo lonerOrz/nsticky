@@ -1,7 +1,13 @@
+# Rust
 /target
+
+# Nix
 .direnv/
 .envrc
 /result
 /result-*
 **/*.rs.bk
+
+#AI
 AGENTS.md
+.sediment/

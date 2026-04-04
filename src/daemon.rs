@@ -65,9 +65,7 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
     let request = match protocol::parse_request(line) {
         Ok(req) => req,
         Err(e) => {
-            writer
-                .write_all(format!("Error: {}\n", e).as_bytes())
-                .await?;
+            writer.write_all(format!("Error: {e}\n").as_bytes()).await?;
             return Ok(());
         }
     };
@@ -99,7 +97,7 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
             }
         }
         protocol::Request::List => match business_logic.list_sticky_windows().await {
-            Ok(windows) => protocol::Response::Data(format!("{:?}\n", windows)),
+            Ok(windows) => protocol::Response::Data(format!("{windows:?}\n")),
             Err(e) => protocol::Response::Error(e.to_string()),
         },
         protocol::Request::ToggleActive => match business_logic.toggle_active_window().await {
@@ -114,13 +112,13 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
         },
         protocol::Request::ToggleAppid { appid } => {
             match business_logic.toggle_by_appid(&appid).await {
-                Ok(count) => protocol::Response::Success(format!("Toggled {} window(s)\n", count)),
+                Ok(count) => protocol::Response::Success(format!("Toggled {count} window(s)\n")),
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
         }
         protocol::Request::ToggleTitle { title } => {
             match business_logic.toggle_by_title(&title).await {
-                Ok(count) => protocol::Response::Success(format!("Toggled {} window(s)\n", count)),
+                Ok(count) => protocol::Response::Success(format!("Toggled {count} window(s)\n")),
                 Err(e) => protocol::Response::Error(e.to_string()),
             }
         }
@@ -172,7 +170,7 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                     .await
                 {
                     Ok(count) => {
-                        protocol::Response::Success(format!("Toggled {} window(s)\n", count))
+                        protocol::Response::Success(format!("Toggled {count} window(s)\n"))
                     }
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
@@ -191,18 +189,18 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                     .await
                 {
                     Ok(count) => {
-                        protocol::Response::Success(format!("Toggled {} window(s)\n", count))
+                        protocol::Response::Success(format!("Toggled {count} window(s)\n"))
                     }
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
             } else if stage_args.all {
                 match business_logic.stage_all_windows().await {
-                    Ok(count) => protocol::Response::Success(format!("Staged {} windows\n", count)),
+                    Ok(count) => protocol::Response::Success(format!("Staged {count} windows\n")),
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
             } else if stage_args.list {
                 match business_logic.list_staged_windows().await {
-                    Ok(windows) => protocol::Response::Data(format!("{:?}\n", windows)),
+                    Ok(windows) => protocol::Response::Data(format!("{windows:?}\n")),
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
             } else if let Some(window_id) = stage_args.window_id {
@@ -226,9 +224,7 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
 
             if unstage_args.all {
                 match business_logic.unstage_all_windows(current_ws_id).await {
-                    Ok(count) => {
-                        protocol::Response::Success(format!("Unstaged {} windows\n", count))
-                    }
+                    Ok(count) => protocol::Response::Success(format!("Unstaged {count} windows\n")),
                     Err(e) => protocol::Response::Error(e.to_string()),
                 }
             } else if unstage_args.active {
@@ -303,18 +299,28 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
                     let is_in_sticky = business_logic.is_window_sticky(id).await;
                     let was_auto_sticky = auto_staged_windows.contains(&id);
 
-                    if (is_in_staged && was_auto_sticky) || (was_auto_sticky && !is_in_sticky) {
+                    if was_auto_sticky && (!is_in_sticky || is_in_staged) {
                         continue;
                     }
 
                     if config.match_sticky(&app_id, &title) {
                         auto_staged_windows.insert(id);
-                        println!("Auto-sticky window {} ({:?})", id, app_id);
+                        println!("Auto-sticky window {id} ({app_id:?})");
                         if let Err(e) = business_logic.add_sticky_window(id).await {
-                            eprintln!("Failed to auto-sticky window {}: {:?}", id, e);
+                            eprintln!("Failed to auto-sticky window {id}: {e:?}");
                         }
                     }
                 }
+            }
+
+            if let Some(closed_event) = v.get("WindowClosed")
+                && let Some(window_id) = closed_event.get("id").and_then(|id| id.as_u64())
+            {
+                println!("Window closed: {window_id}");
+                auto_staged_windows.remove(&window_id);
+                let _ = business_logic
+                    .remove_window_unconditionally(window_id)
+                    .await;
             }
         }
         line.clear();

@@ -1,11 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
     process::Command,
+    time::{Duration, timeout},
 };
+
+const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Window information structure
 #[derive(Debug, Clone)]
@@ -17,10 +20,14 @@ pub struct WindowInfo {
 
 /// Get active workspace ID from Niri
 pub async fn get_active_workspace_id() -> Result<u64> {
-    let output = tokio::process::Command::new("niri")
-        .args(["msg", "-j", "workspaces"])
-        .output()
-        .await?;
+    let output = timeout(
+        IPC_TIMEOUT,
+        tokio::process::Command::new("niri")
+            .args(["msg", "-j", "workspaces"])
+            .output(),
+    )
+    .await
+    .context("IPC timeout getting workspaces")??;
 
     if !output.status.success() {
         anyhow::bail!("Failed to get workspaces");
@@ -44,10 +51,14 @@ pub async fn get_active_workspace_id() -> Result<u64> {
 
 /// Get active window ID from Niri
 pub async fn get_active_window_id() -> Result<u64> {
-    let output = tokio::process::Command::new("niri")
-        .args(["msg", "--json", "focused-window"])
-        .output()
-        .await?;
+    let output = timeout(
+        IPC_TIMEOUT,
+        tokio::process::Command::new("niri")
+            .args(["msg", "--json", "focused-window"])
+            .output(),
+    )
+    .await
+    .context("IPC timeout getting focused window")??;
     if !output.status.success() {
         anyhow::bail!("Failed to get focused window");
     }
@@ -62,10 +73,14 @@ pub async fn get_active_window_id() -> Result<u64> {
 
 /// Get full window information from Niri
 async fn get_full_window_info() -> Result<Vec<WindowInfo>> {
-    let output = Command::new("niri")
-        .args(["msg", "--json", "windows"])
-        .output()
-        .await?;
+    let output = timeout(
+        IPC_TIMEOUT,
+        Command::new("niri")
+            .args(["msg", "--json", "windows"])
+            .output(),
+    )
+    .await
+    .context("IPC timeout getting windows list")??;
     if !output.status.success() {
         anyhow::bail!("Failed to get windows list");
     }
@@ -97,6 +112,7 @@ pub async fn get_full_window_list() -> Result<HashSet<u64>> {
 }
 
 /// Find window by application ID (returns first match)
+#[allow(dead_code)]
 pub async fn find_window_by_appid(appid: &str) -> Result<Option<u64>> {
     let windows = get_full_window_info().await?;
     for window in windows {
@@ -124,6 +140,7 @@ pub async fn find_windows_by_appid(appid: &str) -> Result<Vec<u64>> {
 }
 
 /// Find window by title (returns first match)
+#[allow(dead_code)]
 pub async fn find_window_by_title(title: &str) -> Result<Option<u64>> {
     let windows = get_full_window_info().await?;
     for window in windows {
@@ -152,52 +169,78 @@ pub async fn find_windows_by_title(title: &str) -> Result<Vec<u64>> {
 
 /// Move window to workspace
 pub async fn move_to_workspace(win_id: u64, ws_id: u64) -> Result<()> {
-    let socket_path = std::env::var("NIRI_SOCKET")?;
+    timeout(IPC_TIMEOUT, async move {
+        let socket_path = std::env::var("NIRI_SOCKET")?;
 
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
+        let stream = UnixStream::connect(&socket_path).await?;
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
 
-    let cmd = json!({
-        "Action": {
-            "MoveWindowToWorkspace": {
-                "window_id": win_id,
-                "focus": false,
-                "reference": { "Id": ws_id }
+        let cmd = json!({
+            "Action": {
+                "MoveWindowToWorkspace": {
+                    "window_id": win_id,
+                    "focus": false,
+                    "reference": { "Id": ws_id }
+                }
             }
+        });
+        let cmd_str = serde_json::to_string(&cmd)? + "\n";
+
+        writer.write_all(cmd_str.as_bytes()).await?;
+        writer.flush().await?;
+
+        let mut response = String::new();
+        reader.read_line(&mut response).await?;
+        let response_json: Value = serde_json::from_str(response.trim())?;
+
+        if let Some(err_msg) = response_json.get("Err").and_then(|v| v.as_str()) {
+            anyhow::bail!("Move to workspace failed: {}", err_msg);
         }
-    });
-    let cmd_str = serde_json::to_string(&cmd)? + "\n";
 
-    writer.write_all(cmd_str.as_bytes()).await?;
-    writer.flush().await?;
+        if response_json.get("Ok").is_some() {
+            return Ok(());
+        }
 
-    let mut response = String::new();
-    reader.read_line(&mut response).await?;
-    println!("move_to_workspace response: {}", response.trim());
-    Ok(())
+        anyhow::bail!("Unexpected response format: {}", response);
+    })
+    .await
+    .context("IPC timeout moving window to workspace")?
 }
 
 /// Move window to named workspace
 pub async fn move_to_named_workspace(win_id: u64, workspace_name: &str) -> Result<()> {
-    let socket_path = std::env::var("NIRI_SOCKET")?;
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let cmd = json!({
-        "Action": {
-            "MoveWindowToWorkspace": {
-                "window_id": win_id,
-                "focus": false,
-                "reference": { "Name": workspace_name }
+    timeout(IPC_TIMEOUT, async move {
+        let socket_path = std::env::var("NIRI_SOCKET")?;
+        let stream = UnixStream::connect(&socket_path).await?;
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let cmd = json!({
+            "Action": {
+                "MoveWindowToWorkspace": {
+                    "window_id": win_id,
+                    "focus": false,
+                    "reference": { "Name": workspace_name }
+                }
             }
+        });
+        let cmd_str = serde_json::to_string(&cmd)? + "\n";
+        writer.write_all(cmd_str.as_bytes()).await?;
+        writer.flush().await?;
+        let mut response = String::new();
+        reader.read_line(&mut response).await?;
+        let response_json: Value = serde_json::from_str(response.trim())?;
+
+        if let Some(err_msg) = response_json.get("Err").and_then(|v| v.as_str()) {
+            anyhow::bail!("Move to named workspace failed: {}", err_msg);
         }
-    });
-    let cmd_str = serde_json::to_string(&cmd)? + "\n";
-    writer.write_all(cmd_str.as_bytes()).await?;
-    writer.flush().await?;
-    let mut response = String::new();
-    reader.read_line(&mut response).await?;
-    println!("move_to_named_workspace response: {}", response.trim());
-    Ok(())
+
+        if response_json.get("Ok").is_some() {
+            return Ok(());
+        }
+
+        anyhow::bail!("Unexpected response format: {}", response);
+    })
+    .await
+    .context("IPC timeout moving window to named workspace")?
 }

@@ -19,11 +19,11 @@ impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config: {:?}", path))?;
+            .with_context(|| format!("Failed to read config: {path:?}"))?;
 
         let value: Value = content
             .parse()
-            .with_context(|| format!("Failed to parse TOML: {:?}", path))?;
+            .with_context(|| format!("Failed to parse TOML: {path:?}"))?;
 
         let table = match value {
             Value::Table(t) => t,
@@ -54,7 +54,7 @@ impl Config {
                         .as_ref()
                         .map(|p| {
                             Regex::new(p)
-                                .with_context(|| format!("Invalid app_id regex in sticky.{}", name))
+                                .with_context(|| format!("Invalid app_id regex in sticky.{name}"))
                         })
                         .transpose()?;
 
@@ -62,7 +62,7 @@ impl Config {
                         .as_ref()
                         .map(|p| {
                             Regex::new(p)
-                                .with_context(|| format!("Invalid title regex in sticky.{}", name))
+                                .with_context(|| format!("Invalid title regex in sticky.{name}"))
                         })
                         .transpose()?;
 
@@ -92,7 +92,7 @@ impl Config {
         match Self::load(&path) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("Warning: Failed to load config: {}", e);
+                eprintln!("Warning: Failed to load config: {e}");
                 eprintln!("Using default configuration (no rules).");
                 Config::default()
             }
