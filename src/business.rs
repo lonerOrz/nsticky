@@ -9,13 +9,10 @@ pub struct BusinessLogic {
 }
 
 impl BusinessLogic {
-    pub fn new(
-        sticky_windows: std::sync::Arc<Mutex<HashSet<u64>>>,
-        staged_set: std::sync::Arc<Mutex<HashMap<u64, bool>>>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            sticky_windows,
-            staged_set,
+            sticky_windows: std::sync::Arc::new(Mutex::new(HashSet::new())),
+            staged_set: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -325,7 +322,7 @@ impl BusinessLogic {
             {
                 results.push((id, was_sticky));
             } else {
-                eprintln!("Failed to move window {id} to stage");
+                tracing::error!("Failed to move window {id} to stage");
                 let mut sticky = self.sticky_windows.lock().await;
                 let _staged = self.staged_set.lock().await;
                 if was_sticky {
@@ -442,7 +439,7 @@ impl BusinessLogic {
             {
                 results.push((id, was_sticky));
             } else {
-                eprintln!("Failed to move window {id} to workspace {workspace_id}");
+                tracing::error!("Failed to move window {id} to workspace {workspace_id}");
                 let _sticky = self.sticky_windows.lock().await;
                 let mut staged = self.staged_set.lock().await;
                 staged.insert(id, was_sticky);
@@ -469,13 +466,13 @@ impl BusinessLogic {
                 .await
                 .unwrap_or_default();
             sticky.retain(|win_id| full_window_list.contains(win_id));
-            println!("Updated sticky windows: {:?}", *sticky);
+            tracing::info!("Updated sticky windows: {:?}", *sticky);
             (sticky.clone(), staged.clone())
         };
 
         for win_id in sticky_snapshot.0.iter() {
             if let Err(e) = crate::system_integration::move_to_workspace(*win_id, ws_id).await {
-                eprintln!("Failed to move window {win_id}: {e:?}");
+                tracing::error!("Failed to move window {win_id}: {e:?}");
             }
         }
 

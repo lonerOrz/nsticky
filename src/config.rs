@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use toml::Value;
@@ -92,8 +91,7 @@ impl Config {
         match Self::load(&path) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("Warning: Failed to load config: {e}");
-                eprintln!("Using default configuration (no rules).");
+                tracing::warn!("Failed to load config: {e}, using default (no rules)");
                 Config::default()
             }
         }
@@ -124,10 +122,10 @@ impl Config {
     }
 }
 
-static CONFIG: Lazy<Config> = Lazy::new(Config::load_or_default);
+static CONFIG: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
 
 pub fn get_config() -> &'static Config {
-    &CONFIG
+    CONFIG.get_or_init(Config::load_or_default)
 }
 
 #[cfg(test)]
@@ -143,7 +141,7 @@ mod tests {
 
     fn temp_config(content: &str) -> (Config, TempDir) {
         let id = std::thread::current().id();
-        let dir = std::env::temp_dir().join(format!("nsticky_test_{:?}", id));
+        let dir = std::env::temp_dir().join(format!("nsticky_test_{id:?}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
@@ -151,7 +149,7 @@ mod tests {
         let config = match Config::load(&path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Config load error: {}", e);
+                eprintln!("Config load error: {e}");
                 Config::default()
             }
         };
@@ -224,7 +222,7 @@ app_id = "chromium"
     #[test]
     fn test_invalid_regex() {
         let id = std::thread::current().id();
-        let dir = std::env::temp_dir().join(format!("nsticky_test_{:?}", id));
+        let dir = std::env::temp_dir().join(format!("nsticky_test_{id:?}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
