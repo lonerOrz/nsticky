@@ -331,12 +331,11 @@ dependencies = [
 
 [[package]]
 name = "nsticky"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
  "dirs",
- "once_cell",
  "regex",
  "serde",
  "serde_json",
