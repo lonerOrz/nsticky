@@ -1,0 +1,13 @@
+pull_request_rules:
+  # for dependabot
+  - name: dependabot update nix
+    conditions:
+      - and:
+          - author=dependabot[bot]
+          - label=dependencies
+          - label=nix
+          - check-success=project check
+    actions:
+      update:
+      merge:
+        method: squash

@@ -1,0 +1,44 @@
+name: project check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    name: project check
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Add Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+          skipPush: true
+
+      - name: Nix flake check
+        run: nix flake check --all-systems
+
+      - name: Cargo check
+        run: nix develop -c cargo check --all-targets
+
+      - name: Cargo fmt
+        run: nix develop -c cargo fmt -- --check
+
+      - name: Cargo test
+        run: nix develop -c cargo test --all-features
