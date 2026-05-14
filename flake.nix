@@ -25,6 +25,11 @@
 
       modules = [ ];
 
+      flake.homeModules = rec {
+        default = nsticky;
+        nsticky = ./nix/module.nix;
+      };
+
       perSystem =
         {
           self',
@@ -46,27 +51,7 @@
 
           packages = {
             default = self'.packages.nsticky;
-
-            nsticky = pkgs.rustPlatform.buildRustPackage {
-              pname = "nsticky";
-              version = "0.1.0";
-              src = ./.;
-              cargoLock.lockFile = ./Cargo.lock;
-
-              meta = {
-                description = "A sticky windows manager CLI tool for Niri";
-                homepage = "https://github.com/lonerOrz/nsticky";
-                mainProgram = "nsticky";
-                license = lib.licenses.bsd3;
-                maintainers = with lib.maintainers; [ lonerOrz ];
-                platforms = [
-                  "x86_64-linux"
-                  "aarch64-linux"
-                  "x86_64-darwin"
-                  "aarch64-darwin"
-                ];
-              };
-            };
+            nsticky = pkgs.callPackage ./nix/package.nix { };
           };
 
           devShells.default = pkgs.mkShell {

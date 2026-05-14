@@ -84,10 +84,10 @@ Create `~/.config/nsticky/config.toml` to auto-sticky windows matching rules:
 
 ```toml
 [sticky.firefox]
-app_id = "firefox"
+app-id = "firefox"
 
 [sticky.kitty]
-app_id = "kitty"
+app-id = "kitty"
 title = ".*server.*"
 
 [sticky.gmail]
@@ -98,6 +98,33 @@ title = ".*Gmail.*"
 - `app_id` and `title` are AND logic (both must match)
 - Use regex patterns
 - If only one field is specified, it matches any value
+
+You can also configure nsticky from the home-manager module:
+```nix
+{ inputs, ... }:
+
+{
+  imports = [
+    inputs.nsticky.homeModules.default
+  ];
+
+  programs.sticky = {
+    enable = true;
+    settings = {
+      sticky = {
+        firefox.app-id = "firefox";
+
+        kitty = {
+          app-id = "kitty";
+          title = ".*server.*";
+        };
+
+        gmail.title = ".*Gmail.*";
+      };
+    };
+  };
+}
+```
 
 ---
 
