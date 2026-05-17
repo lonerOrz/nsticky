@@ -108,7 +108,7 @@ You can also configure nsticky from the home-manager module:
     inputs.nsticky.homeModules.default
   ];
 
-  programs.sticky = {
+  programs.nsticky = {
     enable = true;
     settings = {
       sticky = {
