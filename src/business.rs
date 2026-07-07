@@ -510,25 +510,23 @@ impl BusinessLogic {
                     message: e.to_string(),
                 },
             },
-            protocol::Request::Stage(stage_args) => self.handle_stage_command(stage_args).await,
-            protocol::Request::Unstage(unstage_args) => {
-                self.handle_unstage_command(unstage_args).await
-            }
-        }
-    }
-
-    async fn handle_stage_command(&self, args: protocol::StageArgs) -> protocol::Response {
-        if args.active {
-            let active_id = match crate::system_integration::get_active_window_id().await {
-                Ok(id) => id,
-                Err(_) => {
-                    return protocol::Response::Error {
-                        message: "Failed to get active window".to_string(),
-                    };
-                }
-            };
-
-            if self.is_window_staged(active_id).await {
+            protocol::Request::StageList => match self.list_staged_windows().await {
+                Ok(windows) => protocol::Response::Data {
+                    data: format!("{windows:?}"),
+                },
+                Err(e) => protocol::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            protocol::Request::Stage { window_id } => match self.stage_window(window_id).await {
+                Ok(()) => protocol::Response::Success {
+                    message: "Staged window".to_string(),
+                },
+                Err(e) => protocol::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            protocol::Request::Unstage { window_id } => {
                 let current_ws_id = match crate::system_integration::get_active_workspace_id().await
                 {
                     Ok(id) => id,
@@ -538,132 +536,118 @@ impl BusinessLogic {
                         };
                     }
                 };
-                match self.unstage_active_window(current_ws_id).await {
+                match self.unstage_window(window_id, current_ws_id).await {
                     Ok(()) => protocol::Response::Success {
-                        message: "Unstaged active window".to_string(),
-                    },
-                    Err(e) => protocol::Response::Error {
-                        message: e.to_string(),
-                    },
-                }
-            } else {
-                match self.stage_active_window().await {
-                    Ok(()) => protocol::Response::Success {
-                        message: "Staged active window".to_string(),
+                        message: "Unstaged window".to_string(),
                     },
                     Err(e) => protocol::Response::Error {
                         message: e.to_string(),
                     },
                 }
             }
-        } else if let Some(appid) = args.appid {
-            let current_ws_id = match crate::system_integration::get_active_workspace_id().await {
-                Ok(id) => id,
-                Err(_) => {
-                    return protocol::Response::Error {
-                        message: "Failed to get active workspace ID".to_string(),
-                    };
+            protocol::Request::StageToggleActive => {
+                let active_id = match crate::system_integration::get_active_window_id().await {
+                    Ok(id) => id,
+                    Err(_) => {
+                        return protocol::Response::Error {
+                            message: "Failed to get active window".to_string(),
+                        };
+                    }
+                };
+
+                if self.is_window_staged(active_id).await {
+                    let current_ws_id =
+                        match crate::system_integration::get_active_workspace_id().await {
+                            Ok(id) => id,
+                            Err(_) => {
+                                return protocol::Response::Error {
+                                    message: "Failed to get active workspace ID".to_string(),
+                                };
+                            }
+                        };
+                    match self.unstage_active_window(current_ws_id).await {
+                        Ok(()) => protocol::Response::Success {
+                            message: "Unstaged active window".to_string(),
+                        },
+                        Err(e) => protocol::Response::Error {
+                            message: e.to_string(),
+                        },
+                    }
+                } else {
+                    match self.stage_active_window().await {
+                        Ok(()) => protocol::Response::Success {
+                            message: "Staged active window".to_string(),
+                        },
+                        Err(e) => protocol::Response::Error {
+                            message: e.to_string(),
+                        },
+                    }
                 }
-            };
-            match self.toggle_stage_by_appid(&appid, current_ws_id).await {
-                Ok(count) => protocol::Response::Success {
-                    message: format!("Toggled {count} window(s)"),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
             }
-        } else if let Some(title) = args.title {
-            let current_ws_id = match crate::system_integration::get_active_workspace_id().await {
-                Ok(id) => id,
-                Err(_) => {
-                    return protocol::Response::Error {
-                        message: "Failed to get active workspace ID".to_string(),
-                    };
+            protocol::Request::StageToggleAppid { appid } => {
+                let current_ws_id = match crate::system_integration::get_active_workspace_id().await
+                {
+                    Ok(id) => id,
+                    Err(_) => {
+                        return protocol::Response::Error {
+                            message: "Failed to get active workspace ID".to_string(),
+                        };
+                    }
+                };
+                match self.toggle_stage_by_appid(&appid, current_ws_id).await {
+                    Ok(count) => protocol::Response::Success {
+                        message: format!("Toggled {count} window(s)"),
+                    },
+                    Err(e) => protocol::Response::Error {
+                        message: e.to_string(),
+                    },
                 }
-            };
-            match self.toggle_stage_by_title(&title, current_ws_id).await {
-                Ok(count) => protocol::Response::Success {
-                    message: format!("Toggled {count} window(s)"),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
             }
-        } else if args.all {
-            match self.stage_all_windows().await {
+            protocol::Request::StageToggleTitle { title } => {
+                let current_ws_id = match crate::system_integration::get_active_workspace_id().await
+                {
+                    Ok(id) => id,
+                    Err(_) => {
+                        return protocol::Response::Error {
+                            message: "Failed to get active workspace ID".to_string(),
+                        };
+                    }
+                };
+                match self.toggle_stage_by_title(&title, current_ws_id).await {
+                    Ok(count) => protocol::Response::Success {
+                        message: format!("Toggled {count} window(s)"),
+                    },
+                    Err(e) => protocol::Response::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
+            protocol::Request::StageAll => match self.stage_all_windows().await {
                 Ok(count) => protocol::Response::Success {
                     message: format!("Staged {count} windows"),
                 },
                 Err(e) => protocol::Response::Error {
                     message: e.to_string(),
                 },
-            }
-        } else if args.list {
-            match self.list_staged_windows().await {
-                Ok(windows) => protocol::Response::Data {
-                    data: format!("{windows:?}"),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        } else if let Some(window_id) = args.window_id {
-            match self.stage_window(window_id).await {
-                Ok(()) => protocol::Response::Success {
-                    message: "Staged window".to_string(),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        } else {
-            protocol::Response::Error {
-                message: "Invalid stage command".to_string(),
-            }
-        }
-    }
-
-    async fn handle_unstage_command(&self, args: protocol::UnstageArgs) -> protocol::Response {
-        let current_ws_id = match crate::system_integration::get_active_workspace_id().await {
-            Ok(id) => id,
-            Err(_) => {
-                return protocol::Response::Error {
-                    message: "Failed to get active workspace ID".to_string(),
+            },
+            protocol::Request::UnstageAll => {
+                let current_ws_id = match crate::system_integration::get_active_workspace_id().await
+                {
+                    Ok(id) => id,
+                    Err(_) => {
+                        return protocol::Response::Error {
+                            message: "Failed to get active workspace ID".to_string(),
+                        };
+                    }
                 };
-            }
-        };
-
-        if args.all {
-            match self.unstage_all_windows(current_ws_id).await {
-                Ok(count) => protocol::Response::Success {
-                    message: format!("Unstaged {count} windows"),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        } else if args.active {
-            match self.unstage_active_window(current_ws_id).await {
-                Ok(()) => protocol::Response::Success {
-                    message: "Unstaged active window".to_string(),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        } else if let Some(window_id) = args.window_id {
-            match self.unstage_window(window_id, current_ws_id).await {
-                Ok(()) => protocol::Response::Success {
-                    message: "Unstaged window".to_string(),
-                },
-                Err(e) => protocol::Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        } else {
-            protocol::Response::Error {
-                message: "Invalid unstage command".to_string(),
+                match self.unstage_all_windows(current_ws_id).await {
+                    Ok(count) => protocol::Response::Success {
+                        message: format!("Unstaged {count} windows"),
+                    },
+                    Err(e) => protocol::Response::Error {
+                        message: e.to_string(),
+                    },
+                }
             }
         }
     }

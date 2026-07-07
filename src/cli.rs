@@ -100,40 +100,14 @@ pub async fn run_cli() -> Result<()> {
             StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
         },
         Commands::Stage { action } => match action {
-            StageAction::List => protocol::Request::Stage(protocol::StageArgs {
-                list: true,
-                ..Default::default()
-            }),
-            StageAction::Add { window_id } => protocol::Request::Stage(protocol::StageArgs {
-                window_id: Some(window_id),
-                ..Default::default()
-            }),
-            StageAction::Remove { window_id } => {
-                protocol::Request::Unstage(protocol::UnstageArgs {
-                    window_id: Some(window_id),
-                    ..Default::default()
-                })
-            }
-            StageAction::ToggleActive => protocol::Request::Stage(protocol::StageArgs {
-                active: true,
-                ..Default::default()
-            }),
-            StageAction::ToggleAppid { appid } => protocol::Request::Stage(protocol::StageArgs {
-                appid: Some(appid),
-                ..Default::default()
-            }),
-            StageAction::ToggleTitle { title } => protocol::Request::Stage(protocol::StageArgs {
-                title: Some(title),
-                ..Default::default()
-            }),
-            StageAction::AddAll => protocol::Request::Stage(protocol::StageArgs {
-                all: true,
-                ..Default::default()
-            }),
-            StageAction::RemoveAll => protocol::Request::Unstage(protocol::UnstageArgs {
-                all: true,
-                ..Default::default()
-            }),
+            StageAction::List => protocol::Request::StageList,
+            StageAction::Add { window_id } => protocol::Request::Stage { window_id },
+            StageAction::Remove { window_id } => protocol::Request::Unstage { window_id },
+            StageAction::ToggleActive => protocol::Request::StageToggleActive,
+            StageAction::ToggleAppid { appid } => protocol::Request::StageToggleAppid { appid },
+            StageAction::ToggleTitle { title } => protocol::Request::StageToggleTitle { title },
+            StageAction::AddAll => protocol::Request::StageAll,
+            StageAction::RemoveAll => protocol::Request::UnstageAll,
         },
     };
 
