@@ -23,8 +23,7 @@ pub struct WindowInfo {
 
 async fn send_ipc_request(request: &Value) -> Result<Value> {
     timeout(IPC_TIMEOUT, async {
-        let socket_path = std::env::var("NIRI_SOCKET")
-            .context("NIRI_SOCKET env var not set")?;
+        let socket_path = std::env::var("NIRI_SOCKET").context("NIRI_SOCKET env var not set")?;
 
         let stream = UnixStream::connect(&socket_path).await?;
         let (reader, mut writer) = stream.into_split();
@@ -156,4 +155,91 @@ pub async fn move_to_workspace(win_id: u64, dest: WorkspaceRef<'_>) -> Result<()
 
     let _ = send_ipc_request(&cmd).await?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub enum NiriEvent {
+    WorkspaceActivated {
+        id: u64,
+    },
+    WindowOpenedOrChanged {
+        id: u64,
+        app_id: Option<String>,
+        title: Option<String>,
+    },
+    WindowClosed {
+        id: u64,
+    },
+}
+
+fn parse_niri_event(v: &Value) -> Option<NiriEvent> {
+    if let Some(ws) = v.get("WorkspaceActivated") {
+        let id = ws.get("id")?.as_u64()?;
+        return Some(NiriEvent::WorkspaceActivated { id });
+    }
+
+    if let Some(window_event) = v.get("WindowOpenedOrChanged") {
+        let window = window_event.get("window")?;
+        let id = window.get("id")?.as_u64()?;
+        let app_id = window
+            .get("app_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let title = window
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        return Some(NiriEvent::WindowOpenedOrChanged { id, app_id, title });
+    }
+
+    if let Some(closed) = v.get("WindowClosed") {
+        let id = closed.get("id")?.as_u64()?;
+        return Some(NiriEvent::WindowClosed { id });
+    }
+
+    None
+}
+
+pub struct NiriEventStream {
+    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+}
+
+impl NiriEventStream {
+    pub async fn next_event(&mut self) -> Result<Option<NiriEvent>> {
+        let mut line = String::new();
+        loop {
+            let bytes_read = self.reader.read_line(&mut line).await?;
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                line.clear();
+                continue;
+            }
+
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed)
+                && let Some(event) = parse_niri_event(&value)
+            {
+                return Ok(Some(event));
+            }
+            line.clear();
+        }
+    }
+}
+
+pub async fn get_event_stream() -> Result<NiriEventStream> {
+    let socket_path = std::env::var("NIRI_SOCKET").context("NIRI_SOCKET env var not set")?;
+
+    let stream = UnixStream::connect(&socket_path).await?;
+    let (reader, mut writer) = stream.into_split();
+    let reader = BufReader::new(reader);
+
+    let cmd_str = serde_json::to_string(&json!("EventStream"))? + "\n";
+    writer.write_all(cmd_str.as_bytes()).await?;
+    writer.flush().await?;
+    drop(writer);
+
+    Ok(NiriEventStream { reader })
 }

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use serde_json::Value;
 use std::future;
 
 use tokio::{
@@ -330,66 +329,38 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
 }
 
 async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
-    let socket_path = std::env::var("NIRI_SOCKET").expect("NIRI_SOCKET env var not set");
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-
-    writer.write_all(b"\"EventStream\"\n").await?;
-    writer.flush().await?;
-    drop(writer);
-
-    let mut line = String::new();
+    let mut event_stream = crate::system_integration::get_event_stream().await?;
 
     let config = config::get_config();
     let mut auto_staged_windows: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
-    while reader.read_line(&mut line).await? > 0 {
-        if let Ok(v) = serde_json::from_str::<Value>(&line) {
-            if let Some(ws) = v.get("WorkspaceActivated")
-                && let Some(ws_id) = ws.get("id").and_then(|id| id.as_u64())
-            {
+    use crate::system_integration::NiriEvent;
+    while let Some(event) = event_stream.next_event().await? {
+        match event {
+            NiriEvent::WorkspaceActivated { id: ws_id } => {
                 tracing::info!("Workspace switched to: {ws_id}");
                 if let Err(e) = business_logic.handle_workspace_activation(ws_id).await {
                     tracing::error!("Failed to handle workspace activation: {e:?}");
                 }
             }
+            NiriEvent::WindowOpenedOrChanged { id, app_id, title } => {
+                let is_in_staged = business_logic.is_window_staged(id).await;
+                let is_in_sticky = business_logic.is_window_sticky(id).await;
+                let was_auto_sticky = auto_staged_windows.contains(&id);
 
-            if let Some(window_event) = v.get("WindowOpenedOrChanged")
-                && let Some(window) = window_event.get("window")
-            {
-                let app_id = window
-                    .get("app_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let title = window
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let window_id = window.get("id").and_then(|v| v.as_u64());
+                if was_auto_sticky && (!is_in_sticky || is_in_staged) {
+                    continue;
+                }
 
-                if let Some(id) = window_id {
-                    let is_in_staged = business_logic.is_window_staged(id).await;
-                    let is_in_sticky = business_logic.is_window_sticky(id).await;
-                    let was_auto_sticky = auto_staged_windows.contains(&id);
-
-                    if was_auto_sticky && (!is_in_sticky || is_in_staged) {
-                        continue;
-                    }
-
-                    if config.match_sticky(&app_id, &title) {
-                        auto_staged_windows.insert(id);
-                        tracing::info!("Auto-sticky window {id} ({app_id:?})");
-                        if let Err(e) = business_logic.add_sticky_window(id).await {
-                            tracing::error!("Failed to auto-sticky window {id}: {e:?}");
-                        }
+                if config.match_sticky(&app_id, &title) {
+                    auto_staged_windows.insert(id);
+                    tracing::info!("Auto-sticky window {id} ({app_id:?})");
+                    if let Err(e) = business_logic.add_sticky_window(id).await {
+                        tracing::error!("Failed to auto-sticky window {id}: {e:?}");
                     }
                 }
             }
-
-            if let Some(closed_event) = v.get("WindowClosed")
-                && let Some(window_id) = closed_event.get("id").and_then(|id| id.as_u64())
-            {
+            NiriEvent::WindowClosed { id: window_id } => {
                 tracing::info!("Window closed: {window_id}");
                 auto_staged_windows.remove(&window_id);
                 let _ = business_logic
@@ -397,7 +368,6 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
                     .await;
             }
         }
-        line.clear();
     }
 
     Ok(())
