@@ -634,6 +634,19 @@ impl BusinessLogic {
                     message: e.to_string(),
                 },
             },
+            protocol::Request::Windows => {
+                match crate::system_integration::get_full_window_info().await {
+                    Ok(windows) => match serde_json::to_string(&windows) {
+                        Ok(json_str) => protocol::Response::Data { data: json_str },
+                        Err(e) => protocol::Response::Error {
+                            message: format!("Failed to serialize windows: {e}"),
+                        },
+                    },
+                    Err(e) => protocol::Response::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
             protocol::Request::UnstageAll => {
                 let current_ws_id = match crate::system_integration::get_active_workspace_id().await
                 {
@@ -673,7 +686,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_request_all_13_variants_return_valid_response() {
+    async fn test_handle_request_all_variants_return_valid_response() {
         let business = BusinessLogic::new(crate::config::Config::default());
         let variants = [
             protocol::Request::Add { window_id: 0 },
@@ -698,6 +711,7 @@ mod tests {
             },
             protocol::Request::StageAll,
             protocol::Request::UnstageAll,
+            protocol::Request::Windows,
         ];
         for variant in variants {
             let response = business.handle_request(variant.clone()).await;

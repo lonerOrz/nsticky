@@ -17,6 +17,7 @@ pub enum Request {
     StageToggleTitle { title: String },
     StageAll,
     UnstageAll,
+    Windows,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

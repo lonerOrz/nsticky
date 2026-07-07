@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use tokio::{
@@ -14,7 +15,7 @@ pub enum WorkspaceRef<'a> {
     Name(&'a str),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WindowInfo {
     pub id: u64,
     pub app_id: Option<String>,
@@ -82,7 +83,7 @@ pub async fn get_active_window_id() -> Result<u64> {
     }
 }
 
-async fn get_full_window_info() -> Result<Vec<WindowInfo>> {
+pub async fn get_full_window_info() -> Result<Vec<WindowInfo>> {
     let ok_val = send_ipc_request(&json!("Windows")).await?;
     let windows_arr = ok_val
         .get("Windows")

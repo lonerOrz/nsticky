@@ -28,6 +28,15 @@ enum Commands {
         #[command(subcommand)]
         action: StageAction,
     },
+    /// List open windows with optional filters.
+    Windows {
+        /// Filter by application ID (partial match).
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Filter by window title (partial match).
+        #[arg(long)]
+        title: Option<String>,
+    },
 }
 
 /// Actions for sticky windows.
@@ -103,6 +112,7 @@ impl Cli {
                 StageAction::AddAll => protocol::Request::StageAll,
                 StageAction::RemoveAll => protocol::Request::UnstageAll,
             },
+            Commands::Windows { .. } => protocol::Request::Windows,
         }
     }
 }
@@ -110,12 +120,19 @@ impl Cli {
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
+    let filter_args = match &cli.command {
+        Commands::Windows { app_id, title } => (app_id.clone(), title.clone()),
+        _ => (None, None),
+    };
+
     let socket_path = "/tmp/niri_sticky_cli.sock";
     let stream = UnixStream::connect(socket_path).await?;
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
     let request = cli.into_request();
+
+    let is_windows = matches!(request, protocol::Request::Windows);
 
     let request_json = serde_json::to_string(&request)?;
     writer.write_all(request_json.as_bytes()).await?;
@@ -133,7 +150,37 @@ pub async fn run_cli() -> Result<()> {
         protocol::Response::Error { message } => {
             eprintln!("Error: {message}");
         }
-        protocol::Response::Data { data } => println!("{data}"),
+        protocol::Response::Data { data } => {
+            if is_windows {
+                let windows: Vec<crate::system_integration::WindowInfo> =
+                    serde_json::from_str(&data).context("Failed to parse window list")?;
+                let (ref filter_app_id, ref filter_title) = filter_args;
+                let filtered: Vec<_> = windows
+                    .into_iter()
+                    .filter(|w| {
+                        let app_match = match (filter_app_id, &w.app_id) {
+                            (Some(f), Some(id)) => id.to_lowercase().contains(&f.to_lowercase()),
+                            (Some(_), None) => false,
+                            (None, _) => true,
+                        };
+                        let title_match = match (filter_title, &w.title) {
+                            (Some(f), Some(t)) => t.to_lowercase().contains(&f.to_lowercase()),
+                            (Some(_), None) => false,
+                            (None, _) => true,
+                        };
+                        app_match && title_match
+                    })
+                    .collect();
+                println!("{:<10} {:<25} TITLE", "ID", "APP_ID");
+                for w in filtered {
+                    let app_id = w.app_id.as_deref().unwrap_or("<unknown>");
+                    let title = w.title.as_deref().unwrap_or("<unknown>");
+                    println!("{:<10} {:<25} {}", w.id, app_id, title);
+                }
+            } else {
+                println!("{data}");
+            }
+        }
     }
 
     Ok(())
@@ -255,6 +302,16 @@ mod tests {
     fn test_cli_stage_remove_all() {
         let cli = Cli::try_parse_from(["nsticky", "stage", "remove-all"]).unwrap();
         assert_eq!(cli.into_request(), protocol::Request::UnstageAll);
+    }
+
+    #[test]
+    fn test_cli_windows() {
+        let cli = Cli::try_parse_from(["nsticky", "windows"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
+        let cli = Cli::try_parse_from(["nsticky", "windows", "--app-id", "firefox"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
+        let cli = Cli::try_parse_from(["nsticky", "windows", "--title", "gmail"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
     }
 
     #[test]
