@@ -1,7 +1,5 @@
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Define request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Request {
@@ -40,13 +38,4 @@ pub enum Response {
     Success { message: String },
     Error { message: String },
     Data { data: String },
-}
-
-/// Parse JSON string to Request
-pub fn parse_request(line: &str) -> Result<Request> {
-    serde_json::from_str(line).context("Failed to parse request")
-}
-
-pub fn format_response(response: Response) -> Result<String> {
-    serde_json::to_string(&response).context("Failed to serialize response")
 }

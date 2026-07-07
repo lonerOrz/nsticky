@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::future;
 
@@ -47,6 +47,16 @@ async fn run_cli_server(business_logic: BusinessLogic) -> Result<()> {
     }
 }
 
+async fn send_error(writer: &mut (impl AsyncWriteExt + Unpin), msg: &str) -> Result<()> {
+    let response = protocol::Response::Error {
+        message: msg.to_string(),
+    };
+    let response_str = serde_json::to_string(&response).context("Failed to serialize response")?;
+    writer.write_all(response_str.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    Ok(())
+}
+
 async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -58,13 +68,14 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
     }
     let line = line.trim();
 
-    let request = match protocol::parse_request(line) {
+    let request = match serde_json::from_str(line).context("Failed to parse request") {
         Ok(req) => req,
         Err(e) => {
             let response = protocol::Response::Error {
                 message: e.to_string(),
             };
-            let response_str = protocol::format_response(response)?;
+            let response_str =
+                serde_json::to_string(&response).context("Failed to serialize response")?;
             writer.write_all(response_str.as_bytes()).await?;
             writer.write_all(b"\n").await?;
             return Ok(());
@@ -157,27 +168,22 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                 let active_id = match crate::system_integration::get_active_window_id().await {
                     Ok(id) => id,
                     Err(_) => {
-                        let response = protocol::Response::Error {
-                            message: "Failed to get active window".to_string(),
-                        };
-                        let response_str = protocol::format_response(response)?;
-                        return Ok(writer.write_all(response_str.as_bytes()).await?);
+                        send_error(&mut writer, "Failed to get active window").await?;
+                        return Ok(());
                     }
                 };
 
                 let is_staged = business_logic.is_window_staged(active_id).await;
                 if is_staged {
-                    let current_ws_id =
-                        match crate::system_integration::get_active_workspace_id().await {
-                            Ok(id) => id,
-                            Err(_) => {
-                                let response = protocol::Response::Error {
-                                    message: "Failed to get active workspace ID".to_string(),
-                                };
-                                let response_str = protocol::format_response(response)?;
-                                return Ok(writer.write_all(response_str.as_bytes()).await?);
-                            }
-                        };
+                    let current_ws_id = match crate::system_integration::get_active_workspace_id()
+                        .await
+                    {
+                        Ok(id) => id,
+                        Err(_) => {
+                            send_error(&mut writer, "Failed to get active workspace ID").await?;
+                            return Ok(());
+                        }
+                    };
                     match business_logic.unstage_active_window(current_ws_id).await {
                         Ok(()) => protocol::Response::Success {
                             message: "Unstaged active window".to_string(),
@@ -201,11 +207,8 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                 {
                     Ok(id) => id,
                     Err(_) => {
-                        let response = protocol::Response::Error {
-                            message: "Failed to get active workspace ID".to_string(),
-                        };
-                        let response_str = protocol::format_response(response)?;
-                        return Ok(writer.write_all(response_str.as_bytes()).await?);
+                        send_error(&mut writer, "Failed to get active workspace ID").await?;
+                        return Ok(());
                     }
                 };
                 match business_logic
@@ -224,11 +227,8 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
                 {
                     Ok(id) => id,
                     Err(_) => {
-                        let response = protocol::Response::Error {
-                            message: "Failed to get active workspace ID".to_string(),
-                        };
-                        let response_str = protocol::format_response(response)?;
-                        return Ok(writer.write_all(response_str.as_bytes()).await?);
+                        send_error(&mut writer, "Failed to get active workspace ID").await?;
+                        return Ok(());
                     }
                 };
                 match business_logic
@@ -279,11 +279,8 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
             let current_ws_id = match crate::system_integration::get_active_workspace_id().await {
                 Ok(id) => id,
                 Err(_) => {
-                    let response = protocol::Response::Error {
-                        message: "Failed to get active workspace ID".to_string(),
-                    };
-                    let response_str = protocol::format_response(response)?;
-                    return Ok(writer.write_all(response_str.as_bytes()).await?);
+                    send_error(&mut writer, "Failed to get active workspace ID").await?;
+                    return Ok(());
                 }
             };
 
@@ -325,7 +322,7 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
         }
     };
 
-    let response_str = protocol::format_response(response)?;
+    let response_str = serde_json::to_string(&response).context("Failed to serialize response")?;
     writer.write_all(response_str.as_bytes()).await?;
     writer.write_all(b"\n").await?;
 
