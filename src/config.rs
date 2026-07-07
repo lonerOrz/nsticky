@@ -122,12 +122,6 @@ impl Config {
     }
 }
 
-static CONFIG: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
-
-pub fn get_config() -> &'static Config {
-    CONFIG.get_or_init(Config::load_or_default)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

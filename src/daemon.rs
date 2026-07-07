@@ -9,7 +9,8 @@ use tokio::{
 use crate::{business::BusinessLogic, protocol};
 
 pub async fn start() -> Result<()> {
-    let business_logic = BusinessLogic::new();
+    let config = crate::config::Config::load_or_default();
+    let business_logic = BusinessLogic::new(config);
 
     let cli_business_logic = business_logic.clone();
     tokio::spawn(async move {

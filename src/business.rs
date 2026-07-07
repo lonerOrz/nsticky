@@ -10,14 +10,16 @@ pub struct BusinessLogic {
     sticky_windows: std::sync::Arc<Mutex<HashSet<u64>>>,
     staged_set: std::sync::Arc<Mutex<HashMap<u64, bool>>>,
     auto_staged_windows: std::sync::Arc<Mutex<HashSet<u64>>>,
+    config: std::sync::Arc<crate::config::Config>,
 }
 
 impl BusinessLogic {
-    pub fn new() -> Self {
+    pub fn new(config: crate::config::Config) -> Self {
         Self {
             sticky_windows: std::sync::Arc::new(Mutex::new(HashSet::new())),
             staged_set: std::sync::Arc::new(Mutex::new(HashMap::new())),
             auto_staged_windows: std::sync::Arc::new(Mutex::new(HashSet::new())),
+            config: std::sync::Arc::new(config),
         }
     }
 
@@ -408,8 +410,7 @@ impl BusinessLogic {
             return Ok(());
         }
 
-        let config = crate::config::get_config();
-        if config.match_sticky(&app_id, &title) {
+        if self.config.match_sticky(&app_id, &title) {
             tracing::info!("Auto-sticky window {id} ({app_id:?})");
             self.add_sticky_window(id).await?;
             let mut auto_staged = self.auto_staged_windows.lock().await;
@@ -665,5 +666,21 @@ impl BusinessLogic {
                 message: "Invalid unstage command".to_string(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_auto_sticky_empty_config_does_not_sticky() {
+        let business = BusinessLogic::new(crate::config::Config::default());
+        let win_id = 999;
+        business
+            .handle_window_opened_or_changed(win_id, Some("firefox".to_string()), None)
+            .await
+            .unwrap();
+        assert!(!business.is_window_sticky(win_id).await);
     }
 }
