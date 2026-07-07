@@ -74,14 +74,13 @@ impl BusinessLogic {
             return Err(anyhow::anyhow!("Active window not found in Niri"));
         }
 
-        let current_ws_id = crate::system_integration::get_active_workspace_id().await?;
-
         let is_staged = {
             let state = self.state.lock().await;
             state.staged_set.contains_key(&active_id)
         };
 
         if is_staged {
+            let current_ws_id = crate::system_integration::get_active_workspace_id().await?;
             crate::system_integration::move_to_workspace(
                 active_id,
                 WorkspaceRef::Id(current_ws_id),
