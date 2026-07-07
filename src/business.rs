@@ -195,7 +195,7 @@ impl BusinessLogic {
         state.staged_set.contains_key(&window_id)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn is_window_sticky(&self, window_id: u64) -> bool {
         let state = self.state.lock().await;
         state.sticky_windows.contains(&window_id)
@@ -660,6 +660,49 @@ impl BusinessLogic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_handle_request_list_graceful_with_or_without_niri() {
+        let business = BusinessLogic::new(crate::config::Config::default());
+        let response = business.handle_request(protocol::Request::List).await;
+        match &response {
+            protocol::Response::Error { .. } => {} // no Niri available
+            protocol::Response::Data { .. } => {}  // Niri available, empty list
+            other => panic!("Expected Error or Data, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_all_protocol_variants_return_valid_response() {
+        let business = BusinessLogic::new(crate::config::Config::default());
+        // Test every variant that doesn't require Niri IPC validation at the protocol level
+        let variants = [
+            protocol::Request::Add { window_id: 0 },
+            protocol::Request::Remove { window_id: 0 },
+            protocol::Request::List,
+            protocol::Request::ToggleActive,
+            protocol::Request::ToggleAppid {
+                appid: "nonexistent".into(),
+            },
+            protocol::Request::ToggleTitle {
+                title: "nonexistent".into(),
+            },
+            protocol::Request::StageList,
+            protocol::Request::Stage { window_id: 0 },
+        ];
+        for variant in variants {
+            let response = business.handle_request(variant.clone()).await;
+            assert!(
+                matches!(
+                    response,
+                    protocol::Response::Success { .. }
+                        | protocol::Response::Error { .. }
+                        | protocol::Response::Data { .. }
+                ),
+                "Expected a valid Response variant, got {response:?}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_auto_sticky_empty_config_does_not_sticky() {

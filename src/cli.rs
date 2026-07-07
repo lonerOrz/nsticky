@@ -82,6 +82,31 @@ enum StageAction {
     RemoveAll,
 }
 
+impl Cli {
+    pub fn into_request(self) -> protocol::Request {
+        match self.command {
+            Commands::Sticky { action } => match action {
+                StickyAction::Add { window_id } => protocol::Request::Add { window_id },
+                StickyAction::Remove { window_id } => protocol::Request::Remove { window_id },
+                StickyAction::List => protocol::Request::List,
+                StickyAction::ToggleActive => protocol::Request::ToggleActive,
+                StickyAction::ToggleAppid { appid } => protocol::Request::ToggleAppid { appid },
+                StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
+            },
+            Commands::Stage { action } => match action {
+                StageAction::List => protocol::Request::StageList,
+                StageAction::Add { window_id } => protocol::Request::Stage { window_id },
+                StageAction::Remove { window_id } => protocol::Request::Unstage { window_id },
+                StageAction::ToggleActive => protocol::Request::StageToggleActive,
+                StageAction::ToggleAppid { appid } => protocol::Request::StageToggleAppid { appid },
+                StageAction::ToggleTitle { title } => protocol::Request::StageToggleTitle { title },
+                StageAction::AddAll => protocol::Request::StageAll,
+                StageAction::RemoveAll => protocol::Request::UnstageAll,
+            },
+        }
+    }
+}
+
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
@@ -90,26 +115,7 @@ pub async fn run_cli() -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    let request = match cli.command {
-        Commands::Sticky { action } => match action {
-            StickyAction::Add { window_id } => protocol::Request::Add { window_id },
-            StickyAction::Remove { window_id } => protocol::Request::Remove { window_id },
-            StickyAction::List => protocol::Request::List,
-            StickyAction::ToggleActive => protocol::Request::ToggleActive,
-            StickyAction::ToggleAppid { appid } => protocol::Request::ToggleAppid { appid },
-            StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
-        },
-        Commands::Stage { action } => match action {
-            StageAction::List => protocol::Request::StageList,
-            StageAction::Add { window_id } => protocol::Request::Stage { window_id },
-            StageAction::Remove { window_id } => protocol::Request::Unstage { window_id },
-            StageAction::ToggleActive => protocol::Request::StageToggleActive,
-            StageAction::ToggleAppid { appid } => protocol::Request::StageToggleAppid { appid },
-            StageAction::ToggleTitle { title } => protocol::Request::StageToggleTitle { title },
-            StageAction::AddAll => protocol::Request::StageAll,
-            StageAction::RemoveAll => protocol::Request::UnstageAll,
-        },
-    };
+    let request = cli.into_request();
 
     let request_json = serde_json::to_string(&request)?;
     writer.write_all(request_json.as_bytes()).await?;
@@ -131,4 +137,138 @@ pub async fn run_cli() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_sticky_add() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "add", "42"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Add { window_id: 42 });
+    }
+
+    #[test]
+    fn test_cli_sticky_remove() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "remove", "7"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Remove { window_id: 7 }
+        );
+    }
+
+    #[test]
+    fn test_cli_sticky_list() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "list"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::List);
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_active() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-active"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::ToggleActive);
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_appid() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-appid", "firefox"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::ToggleAppid {
+                appid: "firefox".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_title() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-title", "Gmail"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::ToggleTitle {
+                title: "Gmail".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_list() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "list"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageList);
+    }
+
+    #[test]
+    fn test_cli_stage_add() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "add", "99"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Stage { window_id: 99 }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_remove() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "remove", "10"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Unstage { window_id: 10 }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_active() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-active"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageToggleActive);
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_appid() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-appid", "chromium"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::StageToggleAppid {
+                appid: "chromium".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_title() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-title", "Terminal"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::StageToggleTitle {
+                title: "Terminal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_add_all() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "add-all"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageAll);
+    }
+
+    #[test]
+    fn test_cli_stage_remove_all() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "remove-all"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::UnstageAll);
+    }
+
+    #[test]
+    fn test_cli_aliases() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "a", "5"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Add { window_id: 5 });
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "r", "3"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Remove { window_id: 3 }
+        );
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "l"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::List);
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "t"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::ToggleActive);
+    }
 }

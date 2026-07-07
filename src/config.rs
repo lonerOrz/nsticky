@@ -214,6 +214,34 @@ app_id = "chromium"
     }
 
     #[test]
+    fn test_missing_file_returns_err() {
+        let result = Config::load("/tmp/nsticky_nonexistent_test_file_12345.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_file_returns_default() {
+        let (config, _dir) = temp_config("");
+        assert!(!config.match_sticky(&Some("firefox".to_string()), &Some("test".to_string())));
+    }
+
+    #[test]
+    fn test_unknown_fields_are_ignored_gracefully() {
+        let (config, _dir) = temp_config(
+            r#"
+[sticky.firefox]
+app_id = "firefox"
+unknown_field = "should_be_ignored"
+
+[unrelated_table]
+some_key = "also_ignored"
+"#,
+        );
+        assert!(config.match_sticky(&Some("firefox".to_string()), &None));
+        assert!(!config.match_sticky(&Some("chrome".to_string()), &None));
+    }
+
+    #[test]
     fn test_invalid_regex() {
         let id = std::thread::current().id();
         let dir = std::env::temp_dir().join(format!("nsticky_test_{id:?}"));
