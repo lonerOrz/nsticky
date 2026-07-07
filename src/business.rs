@@ -8,6 +8,7 @@ use crate::system_integration::WorkspaceRef;
 pub struct BusinessLogic {
     sticky_windows: std::sync::Arc<Mutex<HashSet<u64>>>,
     staged_set: std::sync::Arc<Mutex<HashMap<u64, bool>>>,
+    auto_staged_windows: std::sync::Arc<Mutex<HashSet<u64>>>,
 }
 
 impl BusinessLogic {
@@ -15,6 +16,7 @@ impl BusinessLogic {
         Self {
             sticky_windows: std::sync::Arc::new(Mutex::new(HashSet::new())),
             staged_set: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            auto_staged_windows: std::sync::Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -387,11 +389,46 @@ impl BusinessLogic {
         Ok(())
     }
 
+    pub async fn handle_window_opened_or_changed(
+        &self,
+        id: u64,
+        app_id: Option<String>,
+        title: Option<String>,
+    ) -> Result<()> {
+        let is_in_staged = self.is_window_staged(id).await;
+        let is_in_sticky = self.is_window_sticky(id).await;
+
+        let was_auto_sticky = {
+            let auto_staged = self.auto_staged_windows.lock().await;
+            auto_staged.contains(&id)
+        };
+
+        if was_auto_sticky && (!is_in_sticky || is_in_staged) {
+            return Ok(());
+        }
+
+        let config = crate::config::get_config();
+        if config.match_sticky(&app_id, &title) {
+            tracing::info!("Auto-sticky window {id} ({app_id:?})");
+            self.add_sticky_window(id).await?;
+            let mut auto_staged = self.auto_staged_windows.lock().await;
+            auto_staged.insert(id);
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_window_closed(&self, id: u64) -> Result<()> {
+        self.remove_window_unconditionally(id).await
+    }
+
     pub async fn remove_window_unconditionally(&self, window_id: u64) -> Result<()> {
         let mut sticky = self.sticky_windows.lock().await;
         let mut staged = self.staged_set.lock().await;
+        let mut auto_staged = self.auto_staged_windows.lock().await;
         sticky.remove(&window_id);
         staged.remove(&window_id);
+        auto_staged.remove(&window_id);
         Ok(())
     }
 }

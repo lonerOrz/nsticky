@@ -6,7 +6,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
-use crate::{business::BusinessLogic, config, protocol};
+use crate::{business::BusinessLogic, protocol};
 
 pub async fn start() -> Result<()> {
     let business_logic = BusinessLogic::new();
@@ -331,9 +331,6 @@ async fn handle_cli_connection(stream: UnixStream, business_logic: BusinessLogic
 async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
     let mut event_stream = crate::system_integration::get_event_stream().await?;
 
-    let config = config::get_config();
-    let mut auto_staged_windows: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
     use crate::system_integration::NiriEvent;
     while let Some(event) = event_stream.next_event().await? {
         match event {
@@ -344,28 +341,18 @@ async fn run_watcher(business_logic: BusinessLogic) -> Result<()> {
                 }
             }
             NiriEvent::WindowOpenedOrChanged { id, app_id, title } => {
-                let is_in_staged = business_logic.is_window_staged(id).await;
-                let is_in_sticky = business_logic.is_window_sticky(id).await;
-                let was_auto_sticky = auto_staged_windows.contains(&id);
-
-                if was_auto_sticky && (!is_in_sticky || is_in_staged) {
-                    continue;
-                }
-
-                if config.match_sticky(&app_id, &title) {
-                    auto_staged_windows.insert(id);
-                    tracing::info!("Auto-sticky window {id} ({app_id:?})");
-                    if let Err(e) = business_logic.add_sticky_window(id).await {
-                        tracing::error!("Failed to auto-sticky window {id}: {e:?}");
-                    }
+                if let Err(e) = business_logic
+                    .handle_window_opened_or_changed(id, app_id, title)
+                    .await
+                {
+                    tracing::error!("Failed to handle window opened or changed: {e:?}");
                 }
             }
             NiriEvent::WindowClosed { id: window_id } => {
                 tracing::info!("Window closed: {window_id}");
-                auto_staged_windows.remove(&window_id);
-                let _ = business_logic
-                    .remove_window_unconditionally(window_id)
-                    .await;
+                if let Err(e) = business_logic.handle_window_closed(window_id).await {
+                    tracing::error!("Failed to handle window closed: {e:?}");
+                }
             }
         }
     }
