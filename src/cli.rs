@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde::Deserialize;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
@@ -83,14 +82,6 @@ enum StageAction {
     RemoveAll,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum CliResponse {
-    Success { message: String },
-    Error { message: String },
-    Data { data: String },
-}
-
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
@@ -109,71 +100,39 @@ pub async fn run_cli() -> Result<()> {
             StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
         },
         Commands::Stage { action } => match action {
-            StageAction::List => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: false,
+            StageAction::List => protocol::Request::Stage(protocol::StageArgs {
                 list: true,
-                active: false,
-                appid: None,
-                title: None,
+                ..Default::default()
             }),
-            StageAction::Add { window_id } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: Some(window_id),
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: None,
-                    title: None,
-                })
-            }
+            StageAction::Add { window_id } => protocol::Request::Stage(protocol::StageArgs {
+                window_id: Some(window_id),
+                ..Default::default()
+            }),
             StageAction::Remove { window_id } => {
-                protocol::Request::Unstage(crate::protocol::UnstageArgs {
+                protocol::Request::Unstage(protocol::UnstageArgs {
                     window_id: Some(window_id),
-                    all: false,
-                    active: false,
+                    ..Default::default()
                 })
             }
-            StageAction::ToggleActive => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: false,
-                list: false,
+            StageAction::ToggleActive => protocol::Request::Stage(protocol::StageArgs {
                 active: true,
-                appid: None,
-                title: None,
+                ..Default::default()
             }),
-            StageAction::ToggleAppid { appid } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: None,
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: Some(appid),
-                    title: None,
-                })
-            }
-            StageAction::ToggleTitle { title } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: None,
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: None,
-                    title: Some(title),
-                })
-            }
-            StageAction::AddAll => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: true,
-                list: false,
-                active: false,
-                appid: None,
-                title: None,
+            StageAction::ToggleAppid { appid } => protocol::Request::Stage(protocol::StageArgs {
+                appid: Some(appid),
+                ..Default::default()
             }),
-            StageAction::RemoveAll => protocol::Request::Unstage(crate::protocol::UnstageArgs {
-                window_id: None,
+            StageAction::ToggleTitle { title } => protocol::Request::Stage(protocol::StageArgs {
+                title: Some(title),
+                ..Default::default()
+            }),
+            StageAction::AddAll => protocol::Request::Stage(protocol::StageArgs {
                 all: true,
-                active: false,
+                ..Default::default()
+            }),
+            StageAction::RemoveAll => protocol::Request::Unstage(protocol::UnstageArgs {
+                all: true,
+                ..Default::default()
             }),
         },
     };
@@ -187,14 +146,14 @@ pub async fn run_cli() -> Result<()> {
     reader.read_line(&mut response).await?;
     let response = response.trim();
 
-    let parsed: CliResponse =
+    let parsed: protocol::Response =
         serde_json::from_str(response).context("Invalid JSON response from daemon")?;
     match parsed {
-        CliResponse::Success { message } => println!("{message}"),
-        CliResponse::Error { message } => {
+        protocol::Response::Success { message } => println!("{message}"),
+        protocol::Response::Error { message } => {
             eprintln!("Error: {message}");
         }
-        CliResponse::Data { data } => println!("{data}"),
+        protocol::Response::Data { data } => println!("{data}"),
     }
 
     Ok(())
