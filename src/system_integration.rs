@@ -112,30 +112,34 @@ pub async fn get_full_window_list() -> Result<HashSet<u64>> {
     Ok(windows.into_iter().map(|w| w.id).collect())
 }
 
-pub async fn find_windows_by_appid(appid: &str) -> Result<Vec<u64>> {
+pub async fn find_windows_by_appid(appid: &str) -> Result<(Vec<u64>, HashSet<u64>)> {
     let windows = get_full_window_info().await?;
     let mut ids = Vec::new();
+    let mut all_ids = HashSet::new();
     for window in windows {
+        all_ids.insert(window.id);
         if let Some(window_appid) = window.app_id
             && window_appid == appid
         {
             ids.push(window.id);
         }
     }
-    Ok(ids)
+    Ok((ids, all_ids))
 }
 
-pub async fn find_windows_by_title(title: &str) -> Result<Vec<u64>> {
+pub async fn find_windows_by_title(title: &str) -> Result<(Vec<u64>, HashSet<u64>)> {
     let windows = get_full_window_info().await?;
     let mut ids = Vec::new();
+    let mut all_ids = HashSet::new();
     for window in windows {
+        all_ids.insert(window.id);
         if let Some(window_title) = window.title
             && window_title.contains(title)
         {
             ids.push(window.id);
         }
     }
-    Ok(ids)
+    Ok((ids, all_ids))
 }
 
 fn build_move_window_action(win_id: u64, dest: &WorkspaceRef<'_>) -> Value {

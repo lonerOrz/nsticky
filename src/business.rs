@@ -103,23 +103,32 @@ impl BusinessLogic {
     }
 
     pub async fn toggle_by_appid(&self, appid: &str) -> Result<usize> {
-        let window_ids = crate::system_integration::find_windows_by_appid(appid).await?;
+        let (window_ids, all_ids) =
+            crate::system_integration::find_windows_by_appid(appid).await?;
         if window_ids.is_empty() {
             return Err(anyhow::anyhow!("No window found with appid {}", appid));
         }
-        self.toggle_windows(window_ids).await
+        self.toggle_windows(window_ids, Some(all_ids)).await
     }
 
     pub async fn toggle_by_title(&self, title: &str) -> Result<usize> {
-        let window_ids = crate::system_integration::find_windows_by_title(title).await?;
+        let (window_ids, all_ids) =
+            crate::system_integration::find_windows_by_title(title).await?;
         if window_ids.is_empty() {
             return Err(anyhow::anyhow!("No window found with title {}", title));
         }
-        self.toggle_windows(window_ids).await
+        self.toggle_windows(window_ids, Some(all_ids)).await
     }
 
-    async fn toggle_windows(&self, window_ids: Vec<u64>) -> Result<usize> {
-        let full_window_list = crate::system_integration::get_full_window_list().await?;
+    async fn toggle_windows(
+        &self,
+        window_ids: Vec<u64>,
+        full_window_list: Option<HashSet<u64>>,
+    ) -> Result<usize> {
+        let full_window_list = match full_window_list {
+            Some(list) => list,
+            None => crate::system_integration::get_full_window_list().await?,
+        };
         let current_ws_id = crate::system_integration::get_active_workspace_id().await?;
         let mut count = 0;
 
@@ -209,23 +218,33 @@ impl BusinessLogic {
     }
 
     pub async fn toggle_stage_by_appid(&self, appid: &str, workspace_id: u64) -> Result<usize> {
-        let window_ids = crate::system_integration::find_windows_by_appid(appid).await?;
+        let (window_ids, all_ids) =
+            crate::system_integration::find_windows_by_appid(appid).await?;
         if window_ids.is_empty() {
             return Err(anyhow::anyhow!("No window found with appid {}", appid));
         }
-        self.toggle_stage_windows(window_ids, workspace_id).await
+        self.toggle_stage_windows(window_ids, workspace_id, Some(all_ids)).await
     }
 
     pub async fn toggle_stage_by_title(&self, title: &str, workspace_id: u64) -> Result<usize> {
-        let window_ids = crate::system_integration::find_windows_by_title(title).await?;
+        let (window_ids, all_ids) =
+            crate::system_integration::find_windows_by_title(title).await?;
         if window_ids.is_empty() {
             return Err(anyhow::anyhow!("No window found with title {}", title));
         }
-        self.toggle_stage_windows(window_ids, workspace_id).await
+        self.toggle_stage_windows(window_ids, workspace_id, Some(all_ids)).await
     }
 
-    async fn toggle_stage_windows(&self, window_ids: Vec<u64>, workspace_id: u64) -> Result<usize> {
-        let full_window_list = crate::system_integration::get_full_window_list().await?;
+    async fn toggle_stage_windows(
+        &self,
+        window_ids: Vec<u64>,
+        workspace_id: u64,
+        full_window_list: Option<HashSet<u64>>,
+    ) -> Result<usize> {
+        let full_window_list = match full_window_list {
+            Some(list) => list,
+            None => crate::system_integration::get_full_window_list().await?,
+        };
         let mut count = 0;
 
         for id in window_ids {
