@@ -125,7 +125,7 @@ pub async fn run_cli() -> Result<()> {
         _ => (None, None),
     };
 
-    let socket_path = "/tmp/niri_sticky_cli.sock";
+    let socket_path = crate::protocol::CLI_SOCKET_PATH;
     let stream = UnixStream::connect(socket_path).await?;
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);

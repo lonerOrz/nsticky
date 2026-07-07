@@ -32,7 +32,7 @@ pub async fn start() -> Result<()> {
 }
 
 async fn run_cli_server(business_logic: BusinessLogic) -> Result<()> {
-    let cli_socket_path = "/tmp/niri_sticky_cli.sock";
+    let cli_socket_path = crate::protocol::CLI_SOCKET_PATH;
     let _ = std::fs::remove_file(cli_socket_path);
     let listener = UnixListener::bind(cli_socket_path)?;
 

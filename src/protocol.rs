@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const CLI_SOCKET_PATH: &str = "/tmp/niri_sticky_cli.sock";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Request {
