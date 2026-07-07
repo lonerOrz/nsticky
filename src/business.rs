@@ -74,24 +74,32 @@ impl BusinessLogic {
             return Err(anyhow::anyhow!("Active window not found in Niri"));
         }
 
-        let mut state = self.state.lock().await;
+        let current_ws_id = crate::system_integration::get_active_workspace_id().await?;
 
-        if state.staged_set.contains_key(&active_id) {
-            let current_ws_id = crate::system_integration::get_active_workspace_id().await?;
+        let is_staged = {
+            let state = self.state.lock().await;
+            state.staged_set.contains_key(&active_id)
+        };
+
+        if is_staged {
             crate::system_integration::move_to_workspace(
                 active_id,
                 WorkspaceRef::Id(current_ws_id),
             )
             .await?;
+            let mut state = self.state.lock().await;
             state.staged_set.remove(&active_id);
             state.sticky_windows.insert(active_id);
             Ok(true)
-        } else if state.sticky_windows.contains(&active_id) {
-            state.sticky_windows.remove(&active_id);
-            Ok(false)
         } else {
-            state.sticky_windows.insert(active_id);
-            Ok(true)
+            let mut state = self.state.lock().await;
+            if state.sticky_windows.contains(&active_id) {
+                state.sticky_windows.remove(&active_id);
+                Ok(false)
+            } else {
+                state.sticky_windows.insert(active_id);
+                Ok(true)
+            }
         }
     }
 
@@ -237,9 +245,9 @@ impl BusinessLogic {
     }
 
     pub async fn stage_all_windows(&self) -> Result<usize> {
+        let full_window_list = crate::system_integration::get_full_window_list().await?;
         let valid_sticky_ids: Vec<u64> = {
             let state = self.state.lock().await;
-            let full_window_list = crate::system_integration::get_full_window_list().await?;
             state
                 .sticky_windows
                 .iter()
@@ -374,11 +382,12 @@ impl BusinessLogic {
     }
 
     pub async fn handle_workspace_activation(&self, ws_id: u64) -> Result<()> {
+        let full_window_list = crate::system_integration::get_full_window_list()
+            .await
+            .unwrap_or_default();
+
         let sticky_snapshot = {
             let mut state = self.state.lock().await;
-            let full_window_list = crate::system_integration::get_full_window_list()
-                .await
-                .unwrap_or_default();
             state
                 .sticky_windows
                 .retain(|win_id| full_window_list.contains(win_id));
