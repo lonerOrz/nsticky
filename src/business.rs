@@ -673,9 +673,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_request_all_protocol_variants_return_valid_response() {
+    async fn test_handle_request_all_13_variants_return_valid_response() {
         let business = BusinessLogic::new(crate::config::Config::default());
-        // Test every variant that doesn't require Niri IPC validation at the protocol level
         let variants = [
             protocol::Request::Add { window_id: 0 },
             protocol::Request::Remove { window_id: 0 },
@@ -689,6 +688,16 @@ mod tests {
             },
             protocol::Request::StageList,
             protocol::Request::Stage { window_id: 0 },
+            protocol::Request::Unstage { window_id: 0 },
+            protocol::Request::StageToggleActive,
+            protocol::Request::StageToggleAppid {
+                appid: "nonexistent".into(),
+            },
+            protocol::Request::StageToggleTitle {
+                title: "nonexistent".into(),
+            },
+            protocol::Request::StageAll,
+            protocol::Request::UnstageAll,
         ];
         for variant in variants {
             let response = business.handle_request(variant.clone()).await;

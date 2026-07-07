@@ -137,13 +137,12 @@ pub async fn find_windows_by_title(title: &str) -> Result<Vec<u64>> {
     Ok(ids)
 }
 
-pub async fn move_to_workspace(win_id: u64, dest: WorkspaceRef<'_>) -> Result<()> {
+fn build_move_window_action(win_id: u64, dest: &WorkspaceRef<'_>) -> Value {
     let reference = match dest {
         WorkspaceRef::Id(id) => json!({ "Id": id }),
         WorkspaceRef::Name(name) => json!({ "Name": name }),
     };
-
-    let cmd = json!({
+    json!({
         "Action": {
             "MoveWindowToWorkspace": {
                 "window_id": win_id,
@@ -151,9 +150,11 @@ pub async fn move_to_workspace(win_id: u64, dest: WorkspaceRef<'_>) -> Result<()
                 "reference": reference
             }
         }
-    });
+    })
+}
 
-    let _ = send_ipc_request(&cmd).await?;
+pub async fn move_to_workspace(win_id: u64, dest: WorkspaceRef<'_>) -> Result<()> {
+    let _ = send_ipc_request(&build_move_window_action(win_id, &dest)).await?;
     Ok(())
 }
 
@@ -242,4 +243,61 @@ pub async fn get_event_stream() -> Result<NiriEventStream> {
     drop(writer);
 
     Ok(NiriEventStream { reader })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_move_window_action_by_id() {
+        let action = build_move_window_action(42, &WorkspaceRef::Id(7));
+        let expected = json!({
+            "Action": {
+                "MoveWindowToWorkspace": {
+                    "window_id": 42,
+                    "focus": false,
+                    "reference": { "Id": 7 }
+                }
+            }
+        });
+        assert_eq!(action, expected);
+    }
+
+    #[test]
+    fn test_build_move_window_action_by_name() {
+        let action = build_move_window_action(99, &WorkspaceRef::Name("stage"));
+        let expected = json!({
+            "Action": {
+                "MoveWindowToWorkspace": {
+                    "window_id": 99,
+                    "focus": false,
+                    "reference": { "Name": "stage" }
+                }
+            }
+        });
+        assert_eq!(action, expected);
+    }
+
+    #[test]
+    fn test_query_command_payloads() {
+        // These are the literal JSON values we send for each query type.
+        // Niri IPC protocol expects these exact string representations.
+        assert_eq!(
+            serde_json::to_string(&json!("Workspaces")).unwrap(),
+            r#""Workspaces""#
+        );
+        assert_eq!(
+            serde_json::to_string(&json!("FocusedWindow")).unwrap(),
+            r#""FocusedWindow""#
+        );
+        assert_eq!(
+            serde_json::to_string(&json!("Windows")).unwrap(),
+            r#""Windows""#
+        );
+        assert_eq!(
+            serde_json::to_string(&json!("EventStream")).unwrap(),
+            r#""EventStream""#
+        );
+    }
 }
