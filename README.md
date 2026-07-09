@@ -151,7 +151,9 @@ nsticky stage restore                   # Pick staged window(s) to restore; pipe
 
 `stage restore` is menu-agnostic and supports multi-select. It pipes the staged window list to an external selector, or falls back to a built-in terminal prompt.
 
-![preview](assets/preview.png)
+<p align="center">
+  <img src="assets/preview.png" alt="Preview" width="80%">
+</p>
 
 - Set the selector in `config.toml`: `menu = "pantry"` — or any dmenu-compatible command.
 - The `NSTICKY_MENU` environment variable overrides the config value.
