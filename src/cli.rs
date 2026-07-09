@@ -182,27 +182,6 @@ async fn run_stage_restore(menu: Option<String>) -> Result<()> {
         _ => return Ok(()),
     };
 
-    if ids.is_empty() {
-        println!("No staged windows.");
-        return Ok(());
-    }
-
-    let all: Vec<WindowInfo> = match daemon_exchange(&protocol::Request::Windows).await? {
-        protocol::Response::Data { data } => serde_json::from_str(&data)?,
-        protocol::Response::Error { message } => {
-            eprintln!("Error: {message}");
-            return Ok(());
-        }
-        _ => return Ok(()),
-    };
-
-    let staged: Vec<WindowInfo> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
-
-    if staged.is_empty() {
-        println!("No active staged windows found.");
-        return Ok(());
-    }
-
     // 选择器来源：环境变量 NSTICKY_MENU 优先，其次 config 的 menu 字段；
     // 都没有则退回纯终端交互。
     let selector = std::env::var("NSTICKY_MENU")
@@ -210,11 +189,43 @@ async fn run_stage_restore(menu: Option<String>) -> Result<()> {
         .filter(|m| !m.trim().is_empty())
         .or(menu);
 
-    if let Some(menu) = selector {
-        return run_menu_restore(&menu, &staged).await;
+    match selector {
+        // 有外部选择器时，即使没有 staged 窗口也照常打开，让它显示空态，
+        // 否则绑定快捷键后会「没反应」，用户无从感知。
+        Some(menu) => {
+            let all: Vec<WindowInfo> = match daemon_exchange(&protocol::Request::Windows).await? {
+                protocol::Response::Data { data } => serde_json::from_str(&data)?,
+                protocol::Response::Error { message } => {
+                    eprintln!("Error: {message}");
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            };
+            let staged: Vec<WindowInfo> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+            run_menu_restore(&menu, &staged).await
+        }
+        // 无选择器（纯终端）才在此短路，避免空列表刷屏。
+        None => {
+            if ids.is_empty() {
+                println!("No staged windows.");
+                return Ok(());
+            }
+            let all: Vec<WindowInfo> = match daemon_exchange(&protocol::Request::Windows).await? {
+                protocol::Response::Data { data } => serde_json::from_str(&data)?,
+                protocol::Response::Error { message } => {
+                    eprintln!("Error: {message}");
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            };
+            let staged: Vec<WindowInfo> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+            if staged.is_empty() {
+                println!("No active staged windows found.");
+                return Ok(());
+            }
+            run_terminal_restore(staged).await
+        }
     }
-
-    run_terminal_restore(staged).await
 }
 
 // 把 staged 列表（每行 "<id>\t<app_id> — <title>"）喂给外部选择器，
