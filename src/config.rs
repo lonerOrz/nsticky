@@ -6,6 +6,7 @@ use toml::Value;
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     sticky_rules: Vec<CompiledRule>,
+    menu: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,8 @@ impl Config {
         };
 
         let mut sticky_rules = Vec::new();
+
+        let menu = table.get("menu").and_then(|v| v.as_str()).map(String::from);
 
         if let Some(sticky) = table.get("sticky")
             && let Some(sticky_table) = sticky.as_table()
@@ -73,7 +76,7 @@ impl Config {
             }
         }
 
-        Ok(Config { sticky_rules })
+        Ok(Config { sticky_rules, menu })
     }
 
     pub fn default_config_dir() -> PathBuf {
@@ -95,6 +98,11 @@ impl Config {
                 Config::default()
             }
         }
+    }
+
+    /// Selector command used by `stage restore`, if configured.
+    pub fn menu(&self) -> Option<&str> {
+        self.menu.as_deref()
     }
 
     pub fn match_sticky(&self, app_id: &Option<String>, title: &Option<String>) -> bool {

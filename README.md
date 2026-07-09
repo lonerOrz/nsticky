@@ -1,33 +1,6 @@
 # nsticky
 
-`nsticky` is a window management helper tool built on top of [niri](https://github.com/YaLTeR/niri). It focuses on managing **sticky windows** — windows fixed across all workspaces — and **staged windows** — windows temporarily moved to a dedicated workspace — to enhance your workflow efficiency.
-
-## Why?
-
-Niri doesn't natively support global sticky windows.
-This tool allows you to designate certain windows to persist on every workspace, mimicking sticky behavior from other window managers. Additionally, it provides a staging area for temporarily hiding windows without losing track of them.
-
-## Features
-
-✨ **Powerful Sticky Window Management:**
-Easily add/remove windows across all workspaces to keep your most important apps visible at all times.
-
-📦 **Window Staging:**
-Move sticky windows to a dedicated "stage" workspace to temporarily hide them, and restore them when needed.
-
-📋 **Organized CLI Commands:**
-Commands are logically grouped into `sticky` and `stage` categories for intuitive usage.
-
-⚡ **Real-time Toggle:**
-Quickly toggle the sticky/stage state of the currently active window with a single command.
-
-🔍 **State Consistency:**
-Atomic operations ensure internal state stays synchronized with actual window positions.
-
-🔧 **Robust Error Handling:**
-Failures during window operations are handled gracefully with state rollbacks.
-
----
+`nsticky` is a window management helper tool built on top of [niri](https://github.com/YaLTeR/niri). It manages **sticky windows** — windows fixed across all workspaces — and **staged windows** — windows temporarily moved to a dedicated workspace. Niri has no native global sticky windows; `nsticky` lets you pin windows to every workspace and park them in a staging area without losing track of them.
 
 ## Installation
 
@@ -74,15 +47,13 @@ cargo build --release
 }
 ```
 
-### 3. Use precompiled binaries directly
-
----
-
 ## Configuration
 
 Create `~/.config/nsticky/config.toml` to auto-sticky windows matching rules:
 
 ```toml
+menu = "pantry -m"
+
 [sticky.firefox]
 app-id = "firefox"
 
@@ -95,11 +66,13 @@ title = ".*Gmail.*"
 ```
 
 **Matching rules:**
+
 - `app_id` and `title` are AND logic (both must match)
 - Use regex patterns
 - If only one field is specified, it matches any value
 
 You can also configure nsticky from the home-manager module:
+
 ```nix
 { inputs, ... }:
 
@@ -110,6 +83,7 @@ You can also configure nsticky from the home-manager module:
 
   programs.nsticky = {
     enable = true;
+    menu = "pantry -m";   # optional: selector for `stage restore`
     settings = {
       sticky = {
         firefox.app-id = "firefox";
@@ -172,53 +146,25 @@ nsticky stage toggle-appid <appid>        # Move window with app ID to stage (if
 nsticky stage toggle-title <title>        # Move window with title to stage (if sticky) or back to current workspace (if staged)
 nsticky stage add-all                   # Move all sticky windows to the "stage" workspace
 nsticky stage remove-all                # Move all staged windows back to the current workspace
+nsticky stage restore                   # Pick staged window(s) to restore; pipes list to $NSTICKY_MENU (or config `menu`), else terminal prompt
 ```
+
+`stage restore` is menu-agnostic and supports multi-select. It pipes the staged window list to an external selector, or falls back to a built-in terminal prompt.
+
+![preview](assets/preview.png)
+
+- Set the selector in `config.toml`: `menu = "pantry"` — or any dmenu-compatible command.
+- The `NSTICKY_MENU` environment variable overrides the config value.
+- The stdin list is `id\tapp_id — title`; the selected lines' ids are restored.
+- Recommended selector: [pantry](https://github.com/lonerOrz/pantry.git).
 
 You can set up shortcuts in `niri`:
 
 ```bash
 Mod+Ctrl+Space { spawn "nsticky" "sticky" "toggle-active"; }
 Mod+Shift+Space { spawn "nsticky" "stage" "toggle-active"; }
+Mod+Shift+R { spawn "nsticky" "stage" "restore"; }   # pick staged window(s) to restore
 ```
-
----
-
-## Design
-
-`nsticky` follows a modular architecture with clear separation of concerns:
-
-### Core Modules:
-
-- **main.rs**: Entry point, starts either CLI or daemon mode
-- **cli.rs**: Parses and sends commands to the daemon
-- **daemon.rs**: Handles incoming CLI commands and Niri events
-- **business.rs**: Implements core business logic with state management
-- **protocol.rs**: Defines command parsing and response formatting
-- **system_integration.rs**: Handles communication with the Niri window manager
-
-### State Management:
-
-- **Sticky Windows**: Windows that appear on every workspace
-- **Staged Windows**: Windows temporarily moved to a dedicated "stage" workspace
-- Atomic operations ensure state consistency during window management operations
-
-The daemon communicates with its CLI via a Unix Domain Socket at `/tmp/niri_sticky_cli.sock`.
-The daemon also listens to `niri`'s event stream to automatically handle window movement on workspace switches.
-
----
-
-## Dependencies
-
-🛠️ **Core Libraries:**
-
-- **Tokio:** Asynchronous runtime for smooth, non-blocking IO.
-- **Clap:** Robust command-line argument parser for structured commands.
-- **Anyhow:** Simplified error handling for better reliability.
-- **Serde / serde_json:** Efficient JSON serialization and deserialization.
-
-🔗 **Integration:**
-
-- **niri:** The window manager integration foundation, enabling seamless event handling.
 
 ---
 

@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::io::Write;
-use std::process::{Command, Stdio};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
 };
 
 use crate::protocol;
+use crate::system_integration::WindowInfo;
 
 #[derive(Parser, Debug)]
 #[command(name = "nsticky")]
@@ -136,36 +136,43 @@ async fn daemon_exchange(req: &protocol::Request) -> Result<protocol::Response> 
     Ok(serde_json::from_str(line.trim())?)
 }
 
-fn run_menu(menu_cmd: &str, input: &str) -> Result<Option<String>> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(menu_cmd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes())?;
+// 无 NSTICKY_MENU 时的纯终端交互：输入编号（空格分隔可多选），q 取消。
+async fn run_terminal_restore(staged: Vec<WindowInfo>) -> Result<()> {
+    println!();
+    for (i, w) in staged.iter().enumerate() {
+        let app_id = w.app_id.as_deref().unwrap_or("?");
+        let title = w.title.as_deref().unwrap_or("?");
+        println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
     }
-
-    let output = child.wait_with_output()?;
-    if output.status.success() {
-        let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !line.is_empty() {
-            return Ok(Some(line));
+    println!();
+    print!(
+        "Restore (1-{}, space-separated for multiple, q): ",
+        staged.len()
+    );
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if input.eq_ignore_ascii_case("q") || input.is_empty() {
+        return Ok(());
+    }
+    for tok in input.split_whitespace() {
+        if let Ok(n) = tok.parse::<usize>()
+            && n >= 1
+            && n <= staged.len()
+        {
+            let w = &staged[n - 1];
+            match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
+                protocol::Response::Success { message } => println!("{message}"),
+                protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                _ => {}
+            }
         }
     }
-    Ok(None)
+    Ok(())
 }
 
-fn parse_id(line: &str) -> Option<u64> {
-    let start = line.find("[ID: ")?;
-    let rest = &line[start + 5..];
-    let end = rest.find(']')?;
-    rest[..end].parse().ok()
-}
-
-async fn run_stage_restore() -> Result<()> {
+async fn run_stage_restore(menu: Option<String>) -> Result<()> {
     let ids: Vec<u64> = match daemon_exchange(&protocol::Request::StageList).await? {
         protocol::Response::Data { data } => serde_json::from_str(&data)?,
         protocol::Response::Error { message } => {
@@ -180,88 +187,107 @@ async fn run_stage_restore() -> Result<()> {
         return Ok(());
     }
 
-    let all: Vec<crate::system_integration::WindowInfo> =
-        match daemon_exchange(&protocol::Request::Windows).await? {
-            protocol::Response::Data { data } => serde_json::from_str(&data)?,
-            protocol::Response::Error { message } => {
-                eprintln!("Error: {message}");
-                return Ok(());
-            }
-            _ => return Ok(()),
-        };
+    let all: Vec<WindowInfo> = match daemon_exchange(&protocol::Request::Windows).await? {
+        protocol::Response::Data { data } => serde_json::from_str(&data)?,
+        protocol::Response::Error { message } => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
 
-    let staged: Vec<crate::system_integration::WindowInfo> =
-        all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+    let staged: Vec<WindowInfo> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
 
     if staged.is_empty() {
         println!("No active staged windows found.");
         return Ok(());
     }
 
-    let mut input_data = String::new();
-    for (i, w) in staged.iter().enumerate() {
-        let app_id = w.app_id.as_deref().unwrap_or("?");
-        let title = w.title.as_deref().unwrap_or("?");
-        input_data.push_str(&format!(
-            "{}. {} — {}  [ID: {}]\n",
-            i + 1,
-            app_id,
-            title,
-            w.id
-        ));
+    // 选择器来源：环境变量 NSTICKY_MENU 优先，其次 config 的 menu 字段；
+    // 都没有则退回纯终端交互。
+    let selector = std::env::var("NSTICKY_MENU")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .or(menu);
+
+    if let Some(menu) = selector {
+        return run_menu_restore(&menu, &staged).await;
     }
 
-    let menu_cmd = std::env::var("NSTICKY_MENU").unwrap_or_else(|_| "fuzzel -d".to_string());
+    run_terminal_restore(staged).await
+}
 
-    match run_menu(&menu_cmd, &input_data) {
-        Ok(Some(line)) => {
-            if let Some(id) = parse_id(&line) {
-                match daemon_exchange(&protocol::Request::Unstage { window_id: id }).await? {
-                    protocol::Response::Success { message } => println!("{message}"),
-                    protocol::Response::Error { message } => eprintln!("Error: {message}"),
-                    _ => {}
-                }
-            }
-        }
-        _ => {
-            eprintln!("Menu '{menu_cmd}' failed, falling back to terminal input.");
-            println!();
-            for (i, w) in staged.iter().enumerate() {
-                let app_id = w.app_id.as_deref().unwrap_or("?");
-                let title = w.title.as_deref().unwrap_or("?");
-                println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
-            }
-            println!();
-            print!("Restore (1-{}, q): ", staged.len());
-            std::io::stdout().flush()?;
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            if let Ok(n) = input.trim().parse::<usize>()
-                && n >= 1 && n <= staged.len()
-            {
-                let w = &staged[n - 1];
-                match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
-                    protocol::Response::Success { message } => println!("{message}"),
-                    protocol::Response::Error { message } => eprintln!("Error: {message}"),
-                    _ => {}
-                }
+// 把 staged 列表（每行 "<id>\t<app_id> — <title>"）喂给外部选择器，
+// 读取其 stdout 逐行提取 window ID 并 restore（支持选择器多选输出多行）。
+async fn run_menu_restore(menu: &str, staged: &[WindowInfo]) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // 菜单程序名可能带参数（如 "fuzzel --dmenu"、"rofi -dmenu"），
+    // 按空白分词成 program + args，不能整体当一个可执行文件名。
+    let mut parts = menu.split_whitespace();
+    let Some(program) = parts.next() else {
+        return Ok(());
+    };
+    let args: Vec<&str> = parts.collect();
+
+    let mut child = Command::new(program)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn selector '{menu}'"))?;
+
+    let input = staged
+        .iter()
+        .map(|w| {
+            format!(
+                "{}\t{} — {}",
+                w.id,
+                w.app_id.as_deref().unwrap_or("?"),
+                w.title.as_deref().unwrap_or("?")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let re = regex::Regex::new(r"\d+").ok();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(re) = &re
+            && let Some(cap) = re.find(line.trim())
+            && let Ok(id) = cap.as_str().parse::<u64>()
+        {
+            match daemon_exchange(&protocol::Request::Unstage { window_id: id }).await? {
+                protocol::Response::Success { message } => println!("{message}"),
+                protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                _ => {}
             }
         }
     }
-
     Ok(())
 }
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
-    if matches!(
-        &cli.command,
-        Commands::Stage {
-            action: StageAction::Restore
-        }
-    ) {
-        return run_stage_restore().await;
+    if let Commands::Stage {
+        action: StageAction::Restore,
+    } = &cli.command
+    {
+        let menu = crate::config::Config::load_or_default()
+            .menu()
+            .map(String::from);
+        return run_stage_restore(menu).await;
     }
 
     let filter_args = match &cli.command {
@@ -296,7 +322,7 @@ pub async fn run_cli() -> Result<()> {
         }
         protocol::Response::Data { data } => {
             if is_windows {
-                let windows: Vec<crate::system_integration::WindowInfo> =
+                let windows: Vec<WindowInfo> =
                     serde_json::from_str(&data).context("Failed to parse window list")?;
                 let (ref filter_app_id, ref filter_title) = filter_args;
                 let filtered: Vec<_> = windows
@@ -460,6 +486,17 @@ mod tests {
 
     #[test]
     fn test_cli_stage_restore() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "restore"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Stage {
+                action: StageAction::Restore
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_stage_restore_renderer() {
         let cli = Cli::try_parse_from(["nsticky", "stage", "restore"]).unwrap();
         assert!(matches!(
             cli.command,
