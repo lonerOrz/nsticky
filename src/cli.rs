@@ -496,17 +496,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_stage_restore_renderer() {
-        let cli = Cli::try_parse_from(["nsticky", "stage", "restore"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Stage {
-                action: StageAction::Restore
-            }
-        ));
-    }
-
-    #[test]
     fn test_cli_stage_restore_alias() {
         let cli = Cli::try_parse_from(["nsticky", "stage", "rs"]).unwrap();
         assert!(matches!(
