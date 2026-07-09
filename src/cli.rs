@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::io::Write;
+use std::process::{Command, Stdio};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
@@ -134,12 +136,38 @@ async fn daemon_exchange(req: &protocol::Request) -> Result<protocol::Response> 
     Ok(serde_json::from_str(line.trim())?)
 }
 
-async fn run_stage_restore() -> Result<()> {
-    let ids = match daemon_exchange(&protocol::Request::StageList).await? {
-        protocol::Response::Data { data } => {
-            let v: Vec<u64> = serde_json::from_str(&data)?;
-            v
+fn run_menu(menu_cmd: &str, input: &str) -> Result<Option<String>> {
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(menu_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+        let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !line.is_empty() {
+            return Ok(Some(line));
         }
+    }
+    Ok(None)
+}
+
+fn parse_id(line: &str) -> Option<u64> {
+    let start = line.find("[ID: ")?;
+    let rest = &line[start + 5..];
+    let end = rest.find(']')?;
+    rest[..end].parse().ok()
+}
+
+async fn run_stage_restore() -> Result<()> {
+    let ids: Vec<u64> = match daemon_exchange(&protocol::Request::StageList).await? {
+        protocol::Response::Data { data } => serde_json::from_str(&data)?,
         protocol::Response::Error { message } => {
             eprintln!("Error: {message}");
             return Ok(());
@@ -152,43 +180,73 @@ async fn run_stage_restore() -> Result<()> {
         return Ok(());
     }
 
-    let all = match daemon_exchange(&protocol::Request::Windows).await? {
-        protocol::Response::Data { data } => {
-            let v: Vec<crate::system_integration::WindowInfo> = serde_json::from_str(&data)?;
-            v
-        }
-        protocol::Response::Error { message } => {
-            eprintln!("Error: {message}");
-            return Ok(());
-        }
-        _ => return Ok(()),
-    };
+    let all: Vec<crate::system_integration::WindowInfo> =
+        match daemon_exchange(&protocol::Request::Windows).await? {
+            protocol::Response::Data { data } => serde_json::from_str(&data)?,
+            protocol::Response::Error { message } => {
+                eprintln!("Error: {message}");
+                return Ok(());
+            }
+            _ => return Ok(()),
+        };
 
-    let staged: Vec<_> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+    let staged: Vec<crate::system_integration::WindowInfo> =
+        all.into_iter().filter(|w| ids.contains(&w.id)).collect();
 
-    println!();
+    if staged.is_empty() {
+        println!("No active staged windows found.");
+        return Ok(());
+    }
+
+    let mut input_data = String::new();
     for (i, w) in staged.iter().enumerate() {
         let app_id = w.app_id.as_deref().unwrap_or("?");
         let title = w.title.as_deref().unwrap_or("?");
-        println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
+        input_data.push_str(&format!(
+            "{}. {} — {}  [ID: {}]\n",
+            i + 1,
+            app_id,
+            title,
+            w.id
+        ));
     }
-    println!();
 
-    use std::io::Write;
-    print!("Restore (1-{}, q): ", staged.len());
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    match input.trim().parse::<usize>() {
-        Ok(n) if n >= 1 && n <= staged.len() => {
-            let w = &staged[n - 1];
-            match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
-                protocol::Response::Success { message } => println!("{message}"),
-                protocol::Response::Error { message } => eprintln!("Error: {message}"),
-                _ => {}
+    let menu_cmd = std::env::var("NSTICKY_MENU").unwrap_or_else(|_| "fuzzel -d".to_string());
+
+    match run_menu(&menu_cmd, &input_data) {
+        Ok(Some(line)) => {
+            if let Some(id) = parse_id(&line) {
+                match daemon_exchange(&protocol::Request::Unstage { window_id: id }).await? {
+                    protocol::Response::Success { message } => println!("{message}"),
+                    protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                    _ => {}
+                }
             }
         }
-        _ => {}
+        _ => {
+            eprintln!("Menu '{menu_cmd}' failed, falling back to terminal input.");
+            println!();
+            for (i, w) in staged.iter().enumerate() {
+                let app_id = w.app_id.as_deref().unwrap_or("?");
+                let title = w.title.as_deref().unwrap_or("?");
+                println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
+            }
+            println!();
+            print!("Restore (1-{}, q): ", staged.len());
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            if let Ok(n) = input.trim().parse::<usize>()
+                && n >= 1 && n <= staged.len()
+            {
+                let w = &staged[n - 1];
+                match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
+                    protocol::Response::Success { message } => println!("{message}"),
+                    protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                    _ => {}
+                }
+            }
+        }
     }
 
     Ok(())
