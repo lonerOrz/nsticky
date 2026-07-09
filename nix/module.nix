@@ -22,6 +22,17 @@ in
         The nsticky package to use.
       '';
     };
+
+    menu = mkOption {
+      type = with types; nullOr str;
+      default = null;
+      example = literalExpression ''"pantry -m"'';
+      description = ''
+        Command used by `stage restore` to pick staged window(s). Any
+        dmenu-compatible program works. Overrides the `menu` key in
+        `settings`. When null, falls back to the built-in terminal prompt.
+      '';
+    };
     
     settings = mkOption {
       inherit (tomlFormat) type;
@@ -51,8 +62,8 @@ in
       cfg.package
     ];
 
-    xdg.configFile."nsticky/config.toml" = mkIf (cfg.settings != { }) {
-      source = tomlFormat.generate "sticky-config" cfg.settings;
+    xdg.configFile."nsticky/config.toml" = mkIf (cfg.settings != { } || cfg.menu != null) {
+      source = tomlFormat.generate "sticky-config" (cfg.settings // lib.optionalAttrs (cfg.menu != null) { menu = cfg.menu; });
     };
 
     systemd.user.services.nsticky = {

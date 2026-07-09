@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde::Deserialize;
+use std::io::Write;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
 };
 
 use crate::protocol;
+use crate::system_integration::WindowInfo;
 
 #[derive(Parser, Debug)]
 #[command(name = "nsticky")]
@@ -28,6 +29,15 @@ enum Commands {
     Stage {
         #[command(subcommand)]
         action: StageAction,
+    },
+    /// List open windows with optional filters.
+    Windows {
+        /// Filter by application ID (partial match).
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Filter by window title (partial match).
+        #[arg(long)]
+        title: Option<String>,
     },
 }
 
@@ -81,102 +91,218 @@ enum StageAction {
     /// Unstage all staged windows.
     #[command(alias = "ra")]
     RemoveAll,
+    /// Interactive restore: list staged windows with names and pick one to unstage.
+    #[command(alias = "rs")]
+    Restore,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum CliResponse {
-    Success { message: String },
-    Error { message: String },
-    Data { data: String },
+impl Cli {
+    pub fn into_request(self) -> protocol::Request {
+        match self.command {
+            Commands::Sticky { action } => match action {
+                StickyAction::Add { window_id } => protocol::Request::Add { window_id },
+                StickyAction::Remove { window_id } => protocol::Request::Remove { window_id },
+                StickyAction::List => protocol::Request::List,
+                StickyAction::ToggleActive => protocol::Request::ToggleActive,
+                StickyAction::ToggleAppid { appid } => protocol::Request::ToggleAppid { appid },
+                StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
+            },
+            Commands::Stage { action } => match action {
+                StageAction::List => protocol::Request::StageList,
+                StageAction::Add { window_id } => protocol::Request::Stage { window_id },
+                StageAction::Remove { window_id } => protocol::Request::Unstage { window_id },
+                StageAction::ToggleActive => protocol::Request::StageToggleActive,
+                StageAction::ToggleAppid { appid } => protocol::Request::StageToggleAppid { appid },
+                StageAction::ToggleTitle { title } => protocol::Request::StageToggleTitle { title },
+                StageAction::AddAll => protocol::Request::StageAll,
+                StageAction::RemoveAll => protocol::Request::UnstageAll,
+                StageAction::Restore => unreachable!("Restore is handled separately"),
+            },
+            Commands::Windows { .. } => protocol::Request::Windows,
+        }
+    }
+}
+
+async fn daemon_exchange(req: &protocol::Request) -> Result<protocol::Response> {
+    let stream = UnixStream::connect(crate::protocol::CLI_SOCKET_PATH).await?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let json = serde_json::to_string(req)?;
+    writer.write_all(json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    Ok(serde_json::from_str(line.trim())?)
+}
+
+// 无 NSTICKY_MENU 时的纯终端交互：输入编号（空格分隔可多选），q 取消。
+async fn run_terminal_restore(staged: Vec<WindowInfo>) -> Result<()> {
+    println!();
+    for (i, w) in staged.iter().enumerate() {
+        let app_id = w.app_id.as_deref().unwrap_or("?");
+        let title = w.title.as_deref().unwrap_or("?");
+        println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
+    }
+    println!();
+    print!(
+        "Restore (1-{}, space-separated for multiple, q): ",
+        staged.len()
+    );
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if input.eq_ignore_ascii_case("q") || input.is_empty() {
+        return Ok(());
+    }
+    for tok in input.split_whitespace() {
+        if let Ok(n) = tok.parse::<usize>()
+            && n >= 1
+            && n <= staged.len()
+        {
+            let w = &staged[n - 1];
+            match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
+                protocol::Response::Success { message } => println!("{message}"),
+                protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_stage_restore(menu: Option<String>) -> Result<()> {
+    let ids: Vec<u64> = match daemon_exchange(&protocol::Request::StageList).await? {
+        protocol::Response::Data { data } => serde_json::from_str(&data)?,
+        protocol::Response::Error { message } => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+
+    if ids.is_empty() {
+        println!("No staged windows.");
+        return Ok(());
+    }
+
+    let all: Vec<WindowInfo> = match daemon_exchange(&protocol::Request::Windows).await? {
+        protocol::Response::Data { data } => serde_json::from_str(&data)?,
+        protocol::Response::Error { message } => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+
+    let staged: Vec<WindowInfo> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+
+    if staged.is_empty() {
+        println!("No active staged windows found.");
+        return Ok(());
+    }
+
+    // 选择器来源：环境变量 NSTICKY_MENU 优先，其次 config 的 menu 字段；
+    // 都没有则退回纯终端交互。
+    let selector = std::env::var("NSTICKY_MENU")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .or(menu);
+
+    if let Some(menu) = selector {
+        return run_menu_restore(&menu, &staged).await;
+    }
+
+    run_terminal_restore(staged).await
+}
+
+// 把 staged 列表（每行 "<id>\t<app_id> — <title>"）喂给外部选择器，
+// 读取其 stdout 逐行提取 window ID 并 restore（支持选择器多选输出多行）。
+async fn run_menu_restore(menu: &str, staged: &[WindowInfo]) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // 菜单程序名可能带参数（如 "fuzzel --dmenu"、"rofi -dmenu"），
+    // 按空白分词成 program + args，不能整体当一个可执行文件名。
+    let mut parts = menu.split_whitespace();
+    let Some(program) = parts.next() else {
+        return Ok(());
+    };
+    let args: Vec<&str> = parts.collect();
+
+    let mut child = Command::new(program)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn selector '{menu}'"))?;
+
+    let input = staged
+        .iter()
+        .map(|w| {
+            format!(
+                "{}\t{} — {}",
+                w.id,
+                w.app_id.as_deref().unwrap_or("?"),
+                w.title.as_deref().unwrap_or("?")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let re = regex::Regex::new(r"\d+").ok();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(re) = &re
+            && let Some(cap) = re.find(line.trim())
+            && let Ok(id) = cap.as_str().parse::<u64>()
+        {
+            match daemon_exchange(&protocol::Request::Unstage { window_id: id }).await? {
+                protocol::Response::Success { message } => println!("{message}"),
+                protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
-    let socket_path = "/tmp/niri_sticky_cli.sock";
+    if let Commands::Stage {
+        action: StageAction::Restore,
+    } = &cli.command
+    {
+        let menu = crate::config::Config::load_or_default()
+            .menu()
+            .map(String::from);
+        return run_stage_restore(menu).await;
+    }
+
+    let filter_args = match &cli.command {
+        Commands::Windows { app_id, title } => (app_id.clone(), title.clone()),
+        _ => (None, None),
+    };
+
+    let socket_path = crate::protocol::CLI_SOCKET_PATH;
     let stream = UnixStream::connect(socket_path).await?;
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    let request = match cli.command {
-        Commands::Sticky { action } => match action {
-            StickyAction::Add { window_id } => protocol::Request::Add { window_id },
-            StickyAction::Remove { window_id } => protocol::Request::Remove { window_id },
-            StickyAction::List => protocol::Request::List,
-            StickyAction::ToggleActive => protocol::Request::ToggleActive,
-            StickyAction::ToggleAppid { appid } => protocol::Request::ToggleAppid { appid },
-            StickyAction::ToggleTitle { title } => protocol::Request::ToggleTitle { title },
-        },
-        Commands::Stage { action } => match action {
-            StageAction::List => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: false,
-                list: true,
-                active: false,
-                appid: None,
-                title: None,
-            }),
-            StageAction::Add { window_id } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: Some(window_id),
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: None,
-                    title: None,
-                })
-            }
-            StageAction::Remove { window_id } => {
-                protocol::Request::Unstage(crate::protocol::UnstageArgs {
-                    window_id: Some(window_id),
-                    all: false,
-                    active: false,
-                })
-            }
-            StageAction::ToggleActive => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: false,
-                list: false,
-                active: true,
-                appid: None,
-                title: None,
-            }),
-            StageAction::ToggleAppid { appid } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: None,
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: Some(appid),
-                    title: None,
-                })
-            }
-            StageAction::ToggleTitle { title } => {
-                protocol::Request::Stage(crate::protocol::StageArgs {
-                    window_id: None,
-                    all: false,
-                    list: false,
-                    active: false,
-                    appid: None,
-                    title: Some(title),
-                })
-            }
-            StageAction::AddAll => protocol::Request::Stage(crate::protocol::StageArgs {
-                window_id: None,
-                all: true,
-                list: false,
-                active: false,
-                appid: None,
-                title: None,
-            }),
-            StageAction::RemoveAll => protocol::Request::Unstage(crate::protocol::UnstageArgs {
-                window_id: None,
-                all: true,
-                active: false,
-            }),
-        },
-    };
+    let request = cli.into_request();
+
+    let is_windows = matches!(request, protocol::Request::Windows);
 
     let request_json = serde_json::to_string(&request)?;
     writer.write_all(request_json.as_bytes()).await?;
@@ -187,15 +313,211 @@ pub async fn run_cli() -> Result<()> {
     reader.read_line(&mut response).await?;
     let response = response.trim();
 
-    let parsed: CliResponse =
+    let parsed: protocol::Response =
         serde_json::from_str(response).context("Invalid JSON response from daemon")?;
     match parsed {
-        CliResponse::Success { message } => println!("{message}"),
-        CliResponse::Error { message } => {
+        protocol::Response::Success { message } => println!("{message}"),
+        protocol::Response::Error { message } => {
             eprintln!("Error: {message}");
         }
-        CliResponse::Data { data } => println!("{data}"),
+        protocol::Response::Data { data } => {
+            if is_windows {
+                let windows: Vec<WindowInfo> =
+                    serde_json::from_str(&data).context("Failed to parse window list")?;
+                let (ref filter_app_id, ref filter_title) = filter_args;
+                let filtered: Vec<_> = windows
+                    .into_iter()
+                    .filter(|w| {
+                        let app_match = match (filter_app_id, &w.app_id) {
+                            (Some(f), Some(id)) => id.to_lowercase().contains(&f.to_lowercase()),
+                            (Some(_), None) => false,
+                            (None, _) => true,
+                        };
+                        let title_match = match (filter_title, &w.title) {
+                            (Some(f), Some(t)) => t.to_lowercase().contains(&f.to_lowercase()),
+                            (Some(_), None) => false,
+                            (None, _) => true,
+                        };
+                        app_match && title_match
+                    })
+                    .collect();
+                println!("{:<10} {:<25} TITLE", "ID", "APP_ID");
+                for w in filtered {
+                    let app_id = w.app_id.as_deref().unwrap_or("<unknown>");
+                    let title = w.title.as_deref().unwrap_or("<unknown>");
+                    println!("{:<10} {:<25} {}", w.id, app_id, title);
+                }
+            } else {
+                println!("{data}");
+            }
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_sticky_add() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "add", "42"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Add { window_id: 42 });
+    }
+
+    #[test]
+    fn test_cli_sticky_remove() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "remove", "7"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Remove { window_id: 7 }
+        );
+    }
+
+    #[test]
+    fn test_cli_sticky_list() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "list"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::List);
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_active() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-active"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::ToggleActive);
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_appid() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-appid", "firefox"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::ToggleAppid {
+                appid: "firefox".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_sticky_toggle_title() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "toggle-title", "Gmail"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::ToggleTitle {
+                title: "Gmail".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_list() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "list"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageList);
+    }
+
+    #[test]
+    fn test_cli_stage_add() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "add", "99"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Stage { window_id: 99 }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_remove() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "remove", "10"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Unstage { window_id: 10 }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_active() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-active"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageToggleActive);
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_appid() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-appid", "chromium"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::StageToggleAppid {
+                appid: "chromium".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_toggle_title() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "toggle-title", "Terminal"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::StageToggleTitle {
+                title: "Terminal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_stage_add_all() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "add-all"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::StageAll);
+    }
+
+    #[test]
+    fn test_cli_stage_remove_all() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "remove-all"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::UnstageAll);
+    }
+
+    #[test]
+    fn test_cli_windows() {
+        let cli = Cli::try_parse_from(["nsticky", "windows"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
+        let cli = Cli::try_parse_from(["nsticky", "windows", "--app-id", "firefox"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
+        let cli = Cli::try_parse_from(["nsticky", "windows", "--title", "gmail"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Windows);
+    }
+
+    #[test]
+    fn test_cli_stage_restore() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "restore"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Stage {
+                action: StageAction::Restore
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_stage_restore_alias() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "rs"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Stage {
+                action: StageAction::Restore
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_aliases() {
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "a", "5"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::Add { window_id: 5 });
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "r", "3"]).unwrap();
+        assert_eq!(
+            cli.into_request(),
+            protocol::Request::Remove { window_id: 3 }
+        );
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "l"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::List);
+        let cli = Cli::try_parse_from(["nsticky", "sticky", "t"]).unwrap();
+        assert_eq!(cli.into_request(), protocol::Request::ToggleActive);
+    }
 }

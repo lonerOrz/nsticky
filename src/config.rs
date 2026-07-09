@@ -6,6 +6,7 @@ use toml::Value;
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     sticky_rules: Vec<CompiledRule>,
+    menu: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,8 @@ impl Config {
         };
 
         let mut sticky_rules = Vec::new();
+
+        let menu = table.get("menu").and_then(|v| v.as_str()).map(String::from);
 
         if let Some(sticky) = table.get("sticky")
             && let Some(sticky_table) = sticky.as_table()
@@ -73,7 +76,7 @@ impl Config {
             }
         }
 
-        Ok(Config { sticky_rules })
+        Ok(Config { sticky_rules, menu })
     }
 
     pub fn default_config_dir() -> PathBuf {
@@ -95,6 +98,11 @@ impl Config {
                 Config::default()
             }
         }
+    }
+
+    /// Selector command used by `stage restore`, if configured.
+    pub fn menu(&self) -> Option<&str> {
+        self.menu.as_deref()
     }
 
     pub fn match_sticky(&self, app_id: &Option<String>, title: &Option<String>) -> bool {
@@ -120,12 +128,6 @@ impl Config {
         }
         false
     }
-}
-
-static CONFIG: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
-
-pub fn get_config() -> &'static Config {
-    CONFIG.get_or_init(Config::load_or_default)
 }
 
 #[cfg(test)]
@@ -217,6 +219,34 @@ app_id = "chromium"
     fn test_no_rules() {
         let (config, _dir) = temp_config("");
         assert!(!config.match_sticky(&Some("firefox".to_string()), &Some("test".to_string())));
+    }
+
+    #[test]
+    fn test_missing_file_returns_err() {
+        let result = Config::load("/tmp/nsticky_nonexistent_test_file_12345.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_file_returns_default() {
+        let (config, _dir) = temp_config("");
+        assert!(!config.match_sticky(&Some("firefox".to_string()), &Some("test".to_string())));
+    }
+
+    #[test]
+    fn test_unknown_fields_are_ignored_gracefully() {
+        let (config, _dir) = temp_config(
+            r#"
+[sticky.firefox]
+app_id = "firefox"
+unknown_field = "should_be_ignored"
+
+[unrelated_table]
+some_key = "also_ignored"
+"#,
+        );
+        assert!(config.match_sticky(&Some("firefox".to_string()), &None));
+        assert!(!config.match_sticky(&Some("chrome".to_string()), &None));
     }
 
     #[test]

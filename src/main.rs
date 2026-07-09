@@ -20,9 +20,6 @@ fn main() -> Result<()> {
         .without_time()
         .init();
 
-    // Pre-initialize config to ensure it's loaded before any async work
-    let _ = config::get_config();
-
     if env::args().nth(1).is_some() {
         // Run in CLI mode
         return tokio::runtime::Runtime::new()?.block_on(cli::run_cli());

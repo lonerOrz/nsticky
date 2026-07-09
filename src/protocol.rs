@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Define request types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+pub const CLI_SOCKET_PATH: &str = "/tmp/niri_sticky_cli.sock";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Request {
     Add { window_id: u64 },
@@ -11,30 +11,18 @@ pub enum Request {
     ToggleActive,
     ToggleAppid { appid: String },
     ToggleTitle { title: String },
-    Stage(StageArgs),
-    Unstage(UnstageArgs),
+    StageList,
+    Stage { window_id: u64 },
+    Unstage { window_id: u64 },
+    StageToggleActive,
+    StageToggleAppid { appid: String },
+    StageToggleTitle { title: String },
+    StageAll,
+    UnstageAll,
+    Windows,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct StageArgs {
-    pub window_id: Option<u64>,
-    pub all: bool,
-    pub list: bool,
-    pub active: bool,
-    pub appid: Option<String>,
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UnstageArgs {
-    pub window_id: Option<u64>,
-    pub all: bool,
-    pub active: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Response {
     Success { message: String },
@@ -42,11 +30,72 @@ pub enum Response {
     Data { data: String },
 }
 
-/// Parse JSON string to Request
-pub fn parse_request(line: &str) -> Result<Request> {
-    serde_json::from_str(line).context("Failed to parse request")
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn format_response(response: Response) -> Result<String> {
-    serde_json::to_string(&response).context("Failed to serialize response")
+    #[test]
+    fn test_request_roundtrip_add() {
+        let req = Request::Add { window_id: 42 };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"command":"add","window_id":42}"#);
+        let deserialized: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, req);
+    }
+
+    #[test]
+    fn test_request_roundtrip_toggle_active() {
+        let req = Request::ToggleActive;
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"command":"toggle_active"}"#);
+        let deserialized: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, req);
+    }
+
+    #[test]
+    fn test_request_roundtrip_stage_toggle_appid() {
+        let req = Request::StageToggleAppid {
+            appid: "firefox".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(
+            json,
+            r#"{"command":"stage_toggle_appid","appid":"firefox"}"#
+        );
+        let deserialized: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, req);
+    }
+
+    #[test]
+    fn test_response_roundtrip_success() {
+        let resp = Response::Success {
+            message: "Done".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"status":"success","message":"Done"}"#);
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, resp);
+    }
+
+    #[test]
+    fn test_response_roundtrip_error() {
+        let resp = Response::Error {
+            message: "Something broke".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"status":"error","message":"Something broke"}"#);
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, resp);
+    }
+
+    #[test]
+    fn test_response_roundtrip_data() {
+        let resp = Response::Data {
+            data: "[1, 2, 3]".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"status":"data","data":"[1, 2, 3]"}"#);
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, resp);
+    }
 }
