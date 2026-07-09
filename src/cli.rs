@@ -89,6 +89,9 @@ enum StageAction {
     /// Unstage all staged windows.
     #[command(alias = "ra")]
     RemoveAll,
+    /// Interactive restore: list staged windows with names and pick one to unstage.
+    #[command(alias = "rs")]
+    Restore,
 }
 
 impl Cli {
@@ -111,14 +114,97 @@ impl Cli {
                 StageAction::ToggleTitle { title } => protocol::Request::StageToggleTitle { title },
                 StageAction::AddAll => protocol::Request::StageAll,
                 StageAction::RemoveAll => protocol::Request::UnstageAll,
+                StageAction::Restore => unreachable!("Restore is handled separately"),
             },
             Commands::Windows { .. } => protocol::Request::Windows,
         }
     }
 }
 
+async fn daemon_exchange(req: &protocol::Request) -> Result<protocol::Response> {
+    let stream = UnixStream::connect(crate::protocol::CLI_SOCKET_PATH).await?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let json = serde_json::to_string(req)?;
+    writer.write_all(json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    Ok(serde_json::from_str(line.trim())?)
+}
+
+async fn run_stage_restore() -> Result<()> {
+    let ids = match daemon_exchange(&protocol::Request::StageList).await? {
+        protocol::Response::Data { data } => {
+            let v: Vec<u64> = serde_json::from_str(&data)?;
+            v
+        }
+        protocol::Response::Error { message } => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+
+    if ids.is_empty() {
+        println!("No staged windows.");
+        return Ok(());
+    }
+
+    let all = match daemon_exchange(&protocol::Request::Windows).await? {
+        protocol::Response::Data { data } => {
+            let v: Vec<crate::system_integration::WindowInfo> = serde_json::from_str(&data)?;
+            v
+        }
+        protocol::Response::Error { message } => {
+            eprintln!("Error: {message}");
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+
+    let staged: Vec<_> = all.into_iter().filter(|w| ids.contains(&w.id)).collect();
+
+    println!();
+    for (i, w) in staged.iter().enumerate() {
+        let app_id = w.app_id.as_deref().unwrap_or("?");
+        let title = w.title.as_deref().unwrap_or("?");
+        println!(" {}. {} — {}  [ID: {}]", i + 1, app_id, title, w.id);
+    }
+    println!();
+
+    use std::io::Write;
+    print!("Restore (1-{}, q): ", staged.len());
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    match input.trim().parse::<usize>() {
+        Ok(n) if n >= 1 && n <= staged.len() => {
+            let w = &staged[n - 1];
+            match daemon_exchange(&protocol::Request::Unstage { window_id: w.id }).await? {
+                protocol::Response::Success { message } => println!("{message}"),
+                protocol::Response::Error { message } => eprintln!("Error: {message}"),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+
+    if matches!(
+        &cli.command,
+        Commands::Stage {
+            action: StageAction::Restore
+        }
+    ) {
+        return run_stage_restore().await;
+    }
 
     let filter_args = match &cli.command {
         Commands::Windows { app_id, title } => (app_id.clone(), title.clone()),
@@ -312,6 +398,28 @@ mod tests {
         assert_eq!(cli.into_request(), protocol::Request::Windows);
         let cli = Cli::try_parse_from(["nsticky", "windows", "--title", "gmail"]).unwrap();
         assert_eq!(cli.into_request(), protocol::Request::Windows);
+    }
+
+    #[test]
+    fn test_cli_stage_restore() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "restore"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Stage {
+                action: StageAction::Restore
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_stage_restore_alias() {
+        let cli = Cli::try_parse_from(["nsticky", "stage", "rs"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Stage {
+                action: StageAction::Restore
+            }
+        ));
     }
 
     #[test]
